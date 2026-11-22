@@ -162,18 +162,31 @@ def append_or_update_friend_email(name: str, email: str, base_dir: str = CURRENT
 
 
 def detect_unit_and_pos(filepath: str, head_text: str = "") -> tuple[str, str]:
-    combined = f"{os.path.basename(filepath)} {os.path.dirname(filepath)} {head_text}".upper()
+    fname_upper = os.path.basename(filepath).upper()
+    combined_upper = f"{fname_upper} {os.path.dirname(filepath).upper()} {head_text.upper()}"
+
     unit = "TTN"
     for u_code, kws in UNIT_KEYWORDS.items():
-        if any(kw.upper() in combined for kw in kws):
+        if any(kw.upper() in fname_upper for kw in kws):
             unit = u_code
             break
+    else:
+        for u_code, kws in UNIT_KEYWORDS.items():
+            if any(kw.upper() in combined_upper for kw in kws):
+                unit = u_code
+                break
 
     pos = "ALL"
     for p_code, kws in POS_KEYWORDS.items():
-        if any(kw.upper() in combined for kw in kws):
+        if any(re.search(rf"(?<![A-Z0-9]){re.escape(kw.upper())}(?![A-Z0-9])", fname_upper) or kw.upper() in fname_upper for kw in kws):
             pos = p_code
             break
+    else:
+        for p_code, kws in POS_KEYWORDS.items():
+            if any(kw.upper() in combined_upper for kw in kws):
+                pos = p_code
+                break
+
     return unit, pos
 
 
