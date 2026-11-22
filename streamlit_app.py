@@ -466,16 +466,41 @@ all_roster_names = list(dict.fromkeys(["江立夫"] + list(friend_emails.keys())
 frequent_list_names = load_frequent_list(all_roster_names)
 sheet_employees = extract_all_employees_from_sources(DEFAULT_RAW_DIR, DEFAULT_TXT_PATH)
 
+raw_unit_groups: dict[str, list[str]] = {}
+for item in sheet_employees:
+    u_code = (item.get("unit") or "TTN").strip().upper()
+    p_code = (item.get("pos") or "ALL").strip().upper()
+    g_key = f"{u_code} / {p_code}"
+    raw_unit_groups.setdefault(g_key, [])
+    if item["name"] not in raw_unit_groups[g_key]:
+        raw_unit_groups[g_key].append(item["name"])
+
+
+def _group_sort_key(g_key: str) -> tuple[int, int, str]:
+    normalized = g_key.replace(" ", "").upper()
+    if "TTN" in normalized:
+        unit_rank = 0
+    elif "TTC" in normalized:
+        unit_rank = 1
+    elif "TTS" in normalized:
+        unit_rank = 2
+    else:
+        unit_rank = 9
+
+    if normalized.endswith("/TA") or "/TA" in normalized:
+        pos_rank = 0
+    elif normalized.endswith("/TM") or "/TM" in normalized:
+        pos_rank = 1
+    else:
+        pos_rank = 5
+    return (unit_rank, pos_rank, normalized)
+
+
 group_map: dict[str, list[str]] = {
     "常用名單": frequent_list_names,
 }
-for item in sheet_employees:
-    u_code = item.get("unit", "TTN")
-    p_code = item.get("pos", "ALL")
-    g_key = f"{u_code} / {p_code}"
-    group_map.setdefault(g_key, [])
-    if item["name"] not in group_map[g_key]:
-        group_map[g_key].append(item["name"])
+for g_key in sorted(raw_unit_groups.keys(), key=_group_sort_key):
+    group_map[g_key] = raw_unit_groups[g_key]
 
 all_sheet_names = [item["name"] for item in sheet_employees]
 group_map["班表全部人員"] = list(dict.fromkeys(all_roster_names + all_sheet_names))
