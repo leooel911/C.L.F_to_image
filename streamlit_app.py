@@ -544,23 +544,31 @@ with st.sidebar:
         if n in all_selectable_names
     ]
     if not is_admin and len(current_targets) > batch_limit:
-        current_targets = current_targets[:batch_limit]
+        current_targets = current_targets[-batch_limit:]
     st.session_state["selected_targets"] = current_targets
 
     if ms_key not in st.session_state:
-        st.session_state[ms_key] = [n for n in current_targets if n in allowed_set]
+        st.session_state[ms_key] = [n for n in current_targets if n in allowed_set][:batch_limit]
 
     def _on_multiselect_change():
         picked = [n for n in st.session_state.get(ms_key, []) if n in allowed_set]
-        others = [
-            n for n in st.session_state.get("selected_targets", [])
-            if n not in allowed_set and n in all_selectable_names
-        ]
-        merged = list(dict.fromkeys(others + picked))
-        if not is_admin and len(merged) > batch_limit:
-            merged = merged[:batch_limit]
-            st.session_state[ms_key] = [n for n in merged if n in allowed_set]
-        st.session_state["selected_targets"] = merged
+        prev_targets = st.session_state.get("selected_targets", [])
+        if not is_admin and batch_limit == 1:
+            # 一般組員單次上限 1 人：以最新點選的那位取代舊選擇
+            newly = [n for n in picked if n not in prev_targets]
+            chosen = newly[-1:] if newly else picked[-1:]
+            st.session_state[ms_key] = chosen
+            st.session_state["selected_targets"] = chosen
+        else:
+            others = [
+                n for n in prev_targets
+                if n not in allowed_set and n in all_selectable_names
+            ]
+            merged = list(dict.fromkeys(others + picked))
+            if not is_admin and len(merged) > batch_limit:
+                merged = merged[-batch_limit:]
+                st.session_state[ms_key] = [n for n in merged if n in allowed_set]
+            st.session_state["selected_targets"] = merged
 
     st.multiselect(
         f"勾選／搜尋人員（{active_group}・{len(filtered_options)} 人）",
