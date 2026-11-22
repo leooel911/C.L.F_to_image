@@ -36,7 +36,7 @@ from schedule_plotter import (
 
 LAST_BATCH_PATH = os.path.join(CURRENT_DIR, ".last_batch.json")
 PENDING_REQUESTS_PATH = os.path.join(CURRENT_DIR, ".pending_roster_requests.json")
-FREQUENT_LIST_NAMES = ["江立夫", "黃淨茵", "李沛迪", "耿瑞騏", "王婷禾", "符湘君"]
+FREQUENT_LIST_NAMES: list[str] = []
 FREQUENT_ORDER_PATH = os.path.join(CURRENT_DIR, ".frequent_list_order.json")
 
 
@@ -52,7 +52,9 @@ def load_frequent_list(all_roster_names: list[str]) -> list[str]:
         except Exception:
             pass
     matched = [n for n in FREQUENT_LIST_NAMES if n in all_roster_names]
-    return matched or all_roster_names[:6]
+    if matched:
+        return matched
+    return all_roster_names[:1] if all_roster_names else []
 
 
 def save_frequent_list(names: list[str]) -> tuple[bool, str]:
