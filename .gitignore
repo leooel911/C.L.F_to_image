@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+.render_cache.json
+.last_batch.json
+班表圖檔/
