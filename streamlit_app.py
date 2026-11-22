@@ -179,7 +179,7 @@ if "selected_targets" not in st.session_state:
 os.makedirs(DEFAULT_RAW_DIR, exist_ok=True)
 
 st.title("C.L.F 勤務班表出圖與郵件通知系統 V2")
-st.caption("支援後台留存底稿（同單位同職位覆蓋）、分類明細快選、名單編輯刪除、分頁檢視與 ZIP 下載")
+st.caption("支援後台留存底稿（同單位同職位覆蓋）、分類精簡快選、名單編輯刪除、分頁檢視與 ZIP 下載")
 
 friend_emails = load_friend_emails(CURRENT_DIR)
 frequent_names = list(dict.fromkeys(["江立夫"] + list(friend_emails.keys())))
@@ -202,35 +202,26 @@ all_selectable_names = group_map["班表全部人員"]
 
 with st.sidebar:
     st.header("出圖與名單設定")
-    st.caption(f"班表底稿共 {len(all_sheet_names)} 人｜常用名單 {len(frequent_names)} 人")
+    st.caption(f"底稿 {len(all_sheet_names)} 人｜常用 {len(frequent_names)} 人")
 
     group_options = list(group_map.keys())
     active_group = st.selectbox("快速分類群組", options=group_options, index=0)
     filtered_options = group_map.get(active_group, all_selectable_names)
 
-    with st.container(border=True):
-        st.markdown(f"**{active_group} 明細（{len(filtered_options)} 人）**")
-        if active_group == "常用 / 發送名單":
-            for person in filtered_options:
-                mail_addr = friend_emails.get(person, "未設定信箱")
-                st.caption(f"• {person}：`{mail_addr}`")
-        else:
-            st.caption("、".join(filtered_options[:30]) + (" ..." if len(filtered_options) > 30 else ""))
-
-        btn_c1, btn_c2 = st.columns(2)
-        with btn_c1:
-            if st.button("加入此分類", use_container_width=True):
-                merged = list(dict.fromkeys(st.session_state["selected_targets"] + filtered_options))
-                st.session_state["selected_targets"] = merged
-                st.rerun()
-        with btn_c2:
-            if st.button("清空已選", use_container_width=True):
-                st.session_state["selected_targets"] = []
-                st.rerun()
+    btn_c1, btn_c2 = st.columns(2)
+    with btn_c1:
+        if st.button("加入此分類", use_container_width=True):
+            merged = list(dict.fromkeys(st.session_state["selected_targets"] + filtered_options))
+            st.session_state["selected_targets"] = merged
+            st.rerun()
+    with btn_c2:
+        if st.button("清空已選", use_container_width=True):
+            st.session_state["selected_targets"] = []
+            st.rerun()
 
     valid_current_selection = [n for n in st.session_state["selected_targets"] if n in all_selectable_names]
     selected_friends = st.multiselect(
-        f"勾選／搜尋出圖人員（{active_group}）",
+        f"勾選／搜尋人員（{active_group}・{len(filtered_options)}人）",
         options=filtered_options,
         default=valid_current_selection,
         key=f"ms_{active_group}",
@@ -242,17 +233,25 @@ with st.sidebar:
     ]
     st.session_state["selected_targets"] = list(dict.fromkeys(other_selected + selected_friends))
 
+    with st.expander(f"檢視 {active_group} 名單明細（{len(filtered_options)} 人）", expanded=False):
+        if active_group == "常用 / 發送名單":
+            for person in filtered_options:
+                mail_addr = friend_emails.get(person, "未設定信箱")
+                st.caption(f"• {person} — `{mail_addr}`")
+        else:
+            st.caption("、".join(filtered_options))
+
     if st.session_state["selected_targets"]:
         st.caption(
-            f"目前已選 {len(st.session_state['selected_targets'])} 人："
-            f"{', '.join(st.session_state['selected_targets'][:8])}"
-            f"{'...' if len(st.session_state['selected_targets']) > 8 else ''}"
+            f"已選 {len(st.session_state['selected_targets'])} 人："
+            f"{'、'.join(st.session_state['selected_targets'][:6])}"
+            f"{' 等' if len(st.session_state['selected_targets']) > 6 else ''}"
         )
 
     extra_names_input = st.text_area(
-        "其他指定姓名（可用逗號或換行分隔）",
+        "其他指定姓名（逗號或換行分隔）",
         value="",
-        height=70,
+        height=65,
         placeholder="例如：王小明, 陳小華",
     )
     skip_unchanged = st.checkbox("略過未變動且已存在的班表圖", value=False)
