@@ -422,7 +422,7 @@ if "upload_dir" not in st.session_state:
 if "ms_epoch" not in st.session_state:
     st.session_state["ms_epoch"] = 0
 if "selected_targets" not in st.session_state:
-    st.session_state["selected_targets"] = ["江立夫"]
+    st.session_state["selected_targets"] = []
 
 if "roster_sync_notice" not in st.session_state:
     st.session_state["roster_sync_notice"] = ""
@@ -477,7 +477,7 @@ if is_admin and st.session_state.get("batch_mail_results"):
     st.session_state["batch_mail_results"] = None
 
 friend_emails = load_friend_emails(CURRENT_DIR)
-all_roster_names = list(dict.fromkeys(["江立夫"] + list(friend_emails.keys())))
+all_roster_names = list(dict.fromkeys(list(friend_emails.keys())))
 frequent_list_names = load_frequent_list(all_roster_names)
 sheet_employees = extract_all_employees_from_sources(DEFAULT_RAW_DIR, DEFAULT_TXT_PATH)
 
