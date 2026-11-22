@@ -172,24 +172,70 @@ if "batch_records" not in st.session_state or "batch_logs" not in st.session_sta
 if "upload_dir" not in st.session_state:
     st.session_state["upload_dir"] = tempfile.mkdtemp(prefix="clf_roster_uploads_")
 
+if "selected_targets" not in st.session_state:
+    st.session_state["selected_targets"] = ["江立夫"]
+
 os.makedirs(DEFAULT_RAW_DIR, exist_ok=True)
 
 st.title("C.L.F 勤務班表出圖與郵件通知系統 V2")
-st.caption("支援後台留存底稿（同單位同職位覆蓋）、班表全員自動帶入選單、分頁檢視與 ZIP 批次下載")
+st.caption("支援後台留存底稿（同單位同職位覆蓋）、分類快選名單、分頁檢視與 ZIP 批次下載")
 
 friend_emails = load_friend_emails(CURRENT_DIR)
+frequent_names = list(dict.fromkeys(["江立夫"] + list(friend_emails.keys())))
 sheet_employees = extract_all_employees_from_sources(DEFAULT_RAW_DIR, DEFAULT_TXT_PATH)
-sheet_names = [item["name"] for item in sheet_employees]
-all_selectable_names = list(dict.fromkeys(["江立夫"] + list(friend_emails.keys()) + sheet_names))
+
+group_map: dict[str, list[str]] = {
+    "常用 / 發送名單": frequent_names,
+}
+for item in sheet_employees:
+    u_code = item.get("unit", "TTN")
+    p_code = item.get("pos", "ALL")
+    g_key = f"{u_code} / {p_code}"
+    group_map.setdefault(g_key, [])
+    if item["name"] not in group_map[g_key]:
+        group_map[g_key].append(item["name"])
+
+all_sheet_names = [item["name"] for item in sheet_employees]
+group_map["班表全部人員"] = list(dict.fromkeys(frequent_names + all_sheet_names))
+all_selectable_names = group_map["班表全部人員"]
 
 with st.sidebar:
     st.header("出圖與名單設定")
-    st.caption(f"已從班表底稿自動帶出 {len(sheet_names)} 位人員")
+    st.caption(f"班表底稿共 {len(all_sheet_names)} 人｜常用名單 {len(frequent_names)} 人")
+
+    group_options = list(group_map.keys())
+    active_group = st.selectbox("快速分類群組", options=group_options, index=0)
+    filtered_options = group_map.get(active_group, all_selectable_names)
+
+    btn_c1, btn_c2 = st.columns(2)
+    with btn_c1:
+        if st.button("加入此分類", use_container_width=True):
+            merged = list(dict.fromkeys(st.session_state["selected_targets"] + filtered_options))
+            st.session_state["selected_targets"] = merged
+            st.rerun()
+    with btn_c2:
+        if st.button("清空已選", use_container_width=True):
+            st.session_state["selected_targets"] = []
+            st.rerun()
+
+    valid_current_selection = [n for n in st.session_state["selected_targets"] if n in all_selectable_names]
     selected_friends = st.multiselect(
-        "快速選擇名單人員（含班表全員）",
-        options=all_selectable_names,
-        default=[n for n in ["江立夫"] if n in all_selectable_names],
+        f"選擇出圖人員（{active_group}・{len(filtered_options)}人）",
+        options=filtered_options,
+        default=valid_current_selection,
+        key=f"ms_{active_group}",
     )
+
+    # 保留其他分類中已勾選的人員，避免切換分類時遺失
+    other_selected = [
+        n for n in st.session_state["selected_targets"]
+        if n not in filtered_options and n in all_selectable_names
+    ]
+    st.session_state["selected_targets"] = list(dict.fromkeys(other_selected + selected_friends))
+
+    if st.session_state["selected_targets"]:
+        st.caption(f"目前共已選 {len(st.session_state['selected_targets'])} 人：{', '.join(st.session_state['selected_targets'][:8])}{'...' if len(st.session_state['selected_targets']) > 8 else ''}")
+
     extra_names_input = st.text_area(
         "其他指定姓名（可用逗號或換行分隔）",
         value="",
@@ -268,7 +314,7 @@ col_run1, col_run2 = st.columns([1, 2])
 with col_run1:
     run_clicked = st.button("執行批次出圖", type="primary", use_container_width=True)
 
-target_names = list(dict.fromkeys(selected_friends + parse_target_names(extra_names_input)))
+target_names = list(dict.fromkeys(st.session_state["selected_targets"] + parse_target_names(extra_names_input)))
 
 if run_clicked:
     if not target_names:
