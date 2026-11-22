@@ -954,3 +954,37 @@ def extract_all_employees_from_sources(raw_dir: str = DEFAULT_RAW_DIR, txt_path:
             pass
 
     return roster
+
+
+def remove_friend_email(name: str, base_dir: str = CURRENT_DIR) -> tuple[bool, str]:
+    clean_n = normalize_name(name)
+    if not clean_n:
+        return False, "請選擇要刪除的人員。"
+
+    rpath = resolve_roster_file(base_dir)
+    os.makedirs(os.path.dirname(rpath), exist_ok=True)
+    lines = []
+    if os.path.exists(rpath):
+        with open(rpath, "r", encoding="utf-8", errors="ignore") as f:
+            lines = f.read().splitlines()
+
+    kept_lines = []
+    removed_from_file = False
+    for line in lines:
+        s = line.strip().rstrip(",")
+        m = re.match(r'^"?([^":]+?)"?\s*:\s*"?([^"]+)"?$', s)
+        if m and normalize_name(m.group(1)) == clean_n:
+            removed_from_file = True
+            continue
+        kept_lines.append(line)
+
+    if clean_n in DEFAULT_FRIEND_EMAILS and not removed_from_file:
+        kept_lines.append(f'"{clean_n}": "",')
+        removed_from_file = True
+
+    with open(rpath, "w", encoding="utf-8") as f:
+        f.write("\n".join([l for l in kept_lines if l is not None]).strip() + ("\n" if kept_lines else ""))
+
+    if removed_from_file:
+        return True, f"已從發送名單移除【{clean_n}】。"
+    return False, f"發送名單中找不到【{clean_n}】。"

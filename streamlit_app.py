@@ -24,6 +24,7 @@ from schedule_plotter import (
     list_stored_rosters,
     load_friend_emails,
     normalize_name,
+    remove_friend_email,
     run_batch_render,
     save_uploaded_roster_overwrite,
     send_email_notification,
@@ -178,7 +179,7 @@ if "selected_targets" not in st.session_state:
 os.makedirs(DEFAULT_RAW_DIR, exist_ok=True)
 
 st.title("C.L.F 勤務班表出圖與郵件通知系統 V2")
-st.caption("支援後台留存底稿（同單位同職位覆蓋）、分類快選名單、分頁檢視與 ZIP 批次下載")
+st.caption("支援後台留存底稿（同單位同職位覆蓋）、分類快選名單、名單編輯刪除、分頁檢視與 ZIP 下載")
 
 friend_emails = load_friend_emails(CURRENT_DIR)
 frequent_names = list(dict.fromkeys(["江立夫"] + list(friend_emails.keys())))
@@ -226,7 +227,6 @@ with st.sidebar:
         key=f"ms_{active_group}",
     )
 
-    # 保留其他分類中已勾選的人員，避免切換分類時遺失
     other_selected = [
         n for n in st.session_state["selected_targets"]
         if n not in filtered_options and n in all_selectable_names
@@ -234,7 +234,11 @@ with st.sidebar:
     st.session_state["selected_targets"] = list(dict.fromkeys(other_selected + selected_friends))
 
     if st.session_state["selected_targets"]:
-        st.caption(f"目前共已選 {len(st.session_state['selected_targets'])} 人：{', '.join(st.session_state['selected_targets'][:8])}{'...' if len(st.session_state['selected_targets']) > 8 else ''}")
+        st.caption(
+            f"目前共已選 {len(st.session_state['selected_targets'])} 人："
+            f"{', '.join(st.session_state['selected_targets'][:8])}"
+            f"{'...' if len(st.session_state['selected_targets']) > 8 else ''}"
+        )
 
     extra_names_input = st.text_area(
         "其他指定姓名（可用逗號或換行分隔）",
@@ -247,16 +251,51 @@ with st.sidebar:
     sync_github_on_upload = st.checkbox("上傳覆蓋時同步更新 GitHub 底稿", value=True)
 
     st.divider()
-    st.subheader("新增／更新發送名單")
-    new_name = st.text_input("人員姓名", key="roster_new_name")
-    new_email = st.text_input("電子信箱", key="roster_new_email")
-    if st.button("儲存至發送名單", use_container_width=True):
-        ok, msg = append_or_update_friend_email(new_name, new_email, CURRENT_DIR)
-        if ok:
-            st.success(msg)
-            st.rerun()
+    st.subheader("編輯／新增發送名單")
+    roster_mode = st.radio(
+        "操作模式",
+        options=["編輯／刪除現有名單", "新增人員"],
+        horizontal=True,
+    )
+
+    if roster_mode == "編輯／刪除現有名單":
+        existing_names = list(friend_emails.keys())
+        if existing_names:
+            target_edit_name = st.selectbox("選擇人員", options=existing_names, key="roster_edit_select")
+            edit_email_val = st.text_input(
+                "電子信箱",
+                value=friend_emails.get(target_edit_name, ""),
+                key=f"roster_edit_email_{target_edit_name}",
+            )
+            ed_c1, ed_c2 = st.columns(2)
+            with ed_c1:
+                if st.button("更新信箱", use_container_width=True):
+                    ok, msg = append_or_update_friend_email(target_edit_name, edit_email_val, CURRENT_DIR)
+                    if ok:
+                        st.success(msg)
+                        st.rerun()
+                    else:
+                        st.error(msg)
+            with ed_c2:
+                if st.button("刪除人員", use_container_width=True):
+                    ok, msg = remove_friend_email(target_edit_name, CURRENT_DIR)
+                    if ok:
+                        st.success(msg)
+                        st.rerun()
+                    else:
+                        st.error(msg)
         else:
-            st.error(msg)
+            st.caption("目前發送名單為空。")
+    else:
+        new_name = st.text_input("人員姓名", key="roster_new_name")
+        new_email = st.text_input("電子信箱", key="roster_new_email")
+        if st.button("新增至發送名單", use_container_width=True):
+            ok, msg = append_or_update_friend_email(new_name, new_email, CURRENT_DIR)
+            if ok:
+                st.success(msg)
+                st.rerun()
+            else:
+                st.error(msg)
 
     with st.expander("目前發送名單一覽"):
         for person, mail in load_friend_emails(CURRENT_DIR).items():
