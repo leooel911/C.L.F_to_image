@@ -36,7 +36,41 @@ from schedule_plotter import (
 
 LAST_BATCH_PATH = os.path.join(CURRENT_DIR, ".last_batch.json")
 PENDING_REQUESTS_PATH = os.path.join(CURRENT_DIR, ".pending_roster_requests.json")
-CORE_FREQUENT_NAMES = ["江立夫", "黃淨茵", "李沛迪", "耿瑞騏", "王婷禾", "符湘君"]
+FREQUENT_LIST_NAMES = ["江立夫", "黃淨茵", "李沛迪", "耿瑞騏", "王婷禾", "符湘君"]
+FREQUENT_ORDER_PATH = os.path.join(CURRENT_DIR, ".frequent_list_order.json")
+
+
+def load_frequent_list(all_roster_names: list[str]) -> list[str]:
+    if os.path.exists(FREQUENT_ORDER_PATH):
+        try:
+            with open(FREQUENT_ORDER_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list) and data:
+                    cleaned = [normalize_name(x) for x in data if normalize_name(x)]
+                    if cleaned:
+                        return list(dict.fromkeys(cleaned))
+        except Exception:
+            pass
+    matched = [n for n in FREQUENT_LIST_NAMES if n in all_roster_names]
+    return matched or all_roster_names[:6]
+
+
+def save_frequent_list(names: list[str]) -> tuple[bool, str]:
+    try:
+        cleaned = list(dict.fromkeys(normalize_name(x) for x in names if normalize_name(x)))
+        with open(FREQUENT_ORDER_PATH, "w", encoding="utf-8") as f:
+            json.dump(cleaned, f, ensure_ascii=False, indent=2)
+        gh_token, gh_repo, gh_branch = get_github_sync_config()
+        return sync_file_to_github(
+            local_file_path=FREQUENT_ORDER_PATH,
+            repo_rel_path=os.path.basename(FREQUENT_ORDER_PATH),
+            github_token=gh_token,
+            github_repo=gh_repo,
+            branch=gh_branch,
+        )
+    except Exception as e:
+        return False, f"儲存常用名單失敗：{e}"
+
 MEMBER_MAX_BATCH = 20
 
 st.set_page_config(
@@ -419,11 +453,11 @@ if is_admin and st.session_state.get("batch_mail_results"):
 
 friend_emails = load_friend_emails(CURRENT_DIR)
 all_roster_names = list(dict.fromkeys(["江立夫"] + list(friend_emails.keys())))
-core_frequent_names = [n for n in CORE_FREQUENT_NAMES if n in all_roster_names] or all_roster_names[:6]
+frequent_list_names = load_frequent_list(all_roster_names)
 sheet_employees = extract_all_employees_from_sources(DEFAULT_RAW_DIR, DEFAULT_TXT_PATH)
 
 group_map: dict[str, list[str]] = {
-    "常用核心（6人）": core_frequent_names,
+    "常用名單": frequent_list_names,
     "已存信箱名單": all_roster_names,
 }
 for item in sheet_employees:
@@ -495,7 +529,7 @@ with st.sidebar:
     )
 
     with st.expander(f"檢視 {active_group} 名單明細（{len(filtered_options)} 人）", expanded=False):
-        if active_group in ("常用核心（6人）", "已存信箱名單"):
+        if active_group in ("常用名單", "已存信箱名單"):
             for person in filtered_options[:60]:
                 mail_addr = friend_emails.get(person, "未設定信箱")
                 st.caption(f"• {person} — `{mail_addr}`")
@@ -555,6 +589,77 @@ with st.sidebar:
                             st.rerun()
         else:
             st.caption("目前沒有待審核的加入申請。")
+
+        st.divider()
+        st.subheader("常用名單選單管理")
+        freq_menu_mode = st.radio(
+            "常用名單操作",
+            options=["挑選現有常用名單修改", "從既有／班表人員加入常用名單"],
+            horizontal=True,
+            key="freq_menu_mode",
+        )
+
+        if freq_menu_mode == "挑選現有常用名單修改":
+            if frequent_list_names:
+                picked_freq_name = st.selectbox(
+                    "選擇常用名單人員",
+                    options=frequent_list_names,
+                    key="freq_pick_existing_select",
+                )
+                picked_freq_mail = st.text_input(
+                    "常用名單信箱",
+                    value=friend_emails.get(picked_freq_name, ""),
+                    key=f"freq_pick_mail_{picked_freq_name}",
+                )
+                fm_c1, fm_c2 = st.columns(2)
+                with fm_c1:
+                    if st.button("儲存信箱變更", key="btn_save_freq_mail", use_container_width=True):
+                        if picked_freq_mail.strip():
+                            ok, msg = append_or_update_friend_email(picked_freq_name, picked_freq_mail.strip(), CURRENT_DIR)
+                            if ok:
+                                _, gh_msg = sync_roster_file_to_github()
+                                st.session_state["roster_sync_notice"] = f"已更新【{picked_freq_name}】信箱（{gh_msg}）"
+                                st.rerun()
+                            else:
+                                st.error(msg)
+                        else:
+                            st.warning("請輸入信箱後再儲存。")
+                with fm_c2:
+                    if st.button("移出常用名單", key="btn_remove_from_freq", use_container_width=True):
+                        next_freq = [n for n in frequent_list_names if n != picked_freq_name]
+                        _, gh_f_msg = save_frequent_list(next_freq)
+                        st.session_state["roster_sync_notice"] = f"已將【{picked_freq_name}】移出常用名單（{gh_f_msg}）。"
+                        st.rerun()
+            else:
+                st.caption("目前常用名單為空。")
+        else:
+            candidate_pool = [n for n in all_selectable_names if n not in frequent_list_names]
+            if candidate_pool:
+                picked_candidate = st.selectbox(
+                    "選擇要加入常用名單的人員",
+                    options=candidate_pool,
+                    key="freq_add_candidate_select",
+                )
+                candidate_mail = st.text_input(
+                    "確認或補填信箱（可留空沿用已存信箱）",
+                    value=friend_emails.get(picked_candidate, ""),
+                    key=f"freq_add_candidate_mail_{picked_candidate}",
+                )
+                if st.button("加入常用名單", key="btn_add_to_freq_menu", use_container_width=True):
+                    next_freq = list(dict.fromkeys(frequent_list_names + [picked_candidate]))
+                    _, gh_f_msg = save_frequent_list(next_freq)
+                    if candidate_mail.strip():
+                        ok_m, msg_m = append_or_update_friend_email(picked_candidate, candidate_mail.strip(), CURRENT_DIR)
+                        if ok_m:
+                            _, gh_msg = sync_roster_file_to_github()
+                            st.session_state["roster_sync_notice"] = f"已將【{picked_candidate}】加入常用名單並同步（{gh_msg}）"
+                        else:
+                            st.error(msg_m)
+                    else:
+                        st.session_state["roster_sync_notice"] = f"已將【{picked_candidate}】加入常用名單（{gh_f_msg}）。"
+                    st.rerun()
+            else:
+                st.caption("可選人員皆已在常用名單中，或可在下方新增人員。")
 
         st.divider()
         st.subheader("編輯／新增發送名單")
