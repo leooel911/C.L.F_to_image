@@ -1,16 +1,24 @@
+V2_DIR="/Users/clf/Desktop/讀班系統/20號自動抄寫系統/CLF班表出圖系統_V2"
+VENV_PY="/Users/clf/Desktop/讀班系統/20號自動抄寫系統/.venv/bin/python3"
+
+cat << 'EOF' > "$V2_DIR/schedule_plotter.py"
 #!/usr/bin/env python3
 """
-班表圖檔核心引擎：支援「班表原檔」自動辨識單位/職位、略過重複出圖、輸出至「班表圖檔」與郵件通知。
+班表圖檔核心引擎：支援「班表原檔」自動辨識單位/職位、同單位同職位覆蓋、略過重複出圖、輸出至「班表圖檔」與郵件通知。
 C.L.F DESIGNS UI/UX 7欄滿格對齊與郵件圖檔優化版 v4.24
 """
 
+import base64
 import glob
 import hashlib
 import io
 import json
 import os
 import re
+import shutil
 import smtplib
+import urllib.error
+import urllib.request
 from datetime import date, datetime, timedelta
 from email.header import Header
 from email.mime.image import MIMEImage
@@ -188,6 +196,114 @@ def read_schedule_dataframe(file_path: str) -> tuple[pd.DataFrame, str, str]:
     )
     unit, pos = detect_unit_and_pos(file_path, head_sample)
     return df, unit, pos
+
+
+def save_uploaded_roster_overwrite(
+    src_file_path: str,
+    original_filename: str,
+    raw_dir: str = DEFAULT_RAW_DIR,
+) -> tuple[str, str, str, bool]:
+    os.makedirs(raw_dir, exist_ok=True)
+    _, unit, pos = read_schedule_dataframe(src_file_path)
+    ext = os.path.splitext(original_filename)[1].lower()
+    if ext not in (".xls", ".xlsx", ".csv"):
+        ext = os.path.splitext(src_file_path)[1].lower() or ".xlsx"
+
+    canonical_name = f"{unit}_{pos}{ext}"
+    dest_path = os.path.join(raw_dir, canonical_name)
+
+    existed = False
+    for old_fp in glob.glob(os.path.join(raw_dir, f"{unit}_{pos}.*")):
+        if os.path.abspath(old_fp) != os.path.abspath(dest_path):
+            os.remove(old_fp)
+            existed = True
+    if os.path.exists(dest_path):
+        existed = True
+
+    shutil.copy2(src_file_path, dest_path)
+    return dest_path, unit, pos, existed
+
+
+def list_stored_rosters(raw_dir: str = DEFAULT_RAW_DIR) -> list[dict]:
+    items = []
+    if not raw_dir or not os.path.isdir(raw_dir):
+        return items
+    for ext in ("*.xlsx", "*.xls", "*.csv"):
+        for fp in glob.glob(os.path.join(raw_dir, ext)):
+            bn = os.path.basename(fp)
+            if bn.startswith("~$") or bn == ".DS_Store":
+                continue
+            unit, pos = detect_unit_and_pos(fp, "")
+            mtime = datetime.fromtimestamp(os.path.getmtime(fp)).strftime("%Y-%m-%d %H:%M")
+            items.append({
+                "filename": bn,
+                "path": fp,
+                "unit": unit,
+                "pos": pos,
+                "updated_at": mtime,
+            })
+    items.sort(key=lambda x: (x["unit"], x["pos"], x["filename"]))
+    return items
+
+
+def sync_file_to_github(
+    local_file_path: str,
+    repo_rel_path: str,
+    github_token: str,
+    github_repo: str,
+    branch: str = "main",
+) -> tuple[bool, str]:
+    if not github_token or not github_repo:
+        return False, "未設定 GITHUB_TOKEN 或 GITHUB_REPO，僅更新目前容器後台。"
+    if not os.path.exists(local_file_path):
+        return False, f"找不到本機檔案：{local_file_path}"
+
+    api_url = f"https://api.github.com/repos/{github_repo}/contents/{repo_rel_path}"
+    headers = {
+        "Authorization": f"Bearer {github_token}",
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "CLF-Duty-Scheduler-V2",
+    }
+
+    sha = None
+    get_req = urllib.request.Request(f"{api_url}?ref={branch}", headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(get_req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            sha = data.get("sha")
+    except urllib.error.HTTPError as e:
+        if e.code != 404:
+            return False, f"查詢 GitHub 檔案失敗（HTTP {e.code}）"
+    except Exception as e:
+        return False, f"連線 GitHub 失敗：{e}"
+
+    with open(local_file_path, "rb") as f:
+        b64_content = base64.b64encode(f.read()).decode("ascii")
+
+    payload = {
+        "message": f"Update roster baseline: {repo_rel_path}",
+        "content": b64_content,
+        "branch": branch,
+    }
+    if sha:
+        payload["sha"] = sha
+
+    put_req = urllib.request.Request(
+        api_url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={**headers, "Content-Type": "application/json"},
+        method="PUT",
+    )
+    try:
+        with urllib.request.urlopen(put_req, timeout=20) as resp:
+            if resp.status in (200, 201):
+                return True, f"已同步覆蓋至 GitHub `{repo_rel_path}`"
+            return False, f"GitHub 更新回應異常（HTTP {resp.status}）"
+    except urllib.error.HTTPError as e:
+        err_body = e.read().decode("utf-8", errors="ignore")
+        return False, f"GitHub 寫入失敗（HTTP {e.code}）：{err_body[:160]}"
+    except Exception as e:
+        return False, f"GitHub 同步發生錯誤：{e}"
 
 
 def parse_transport_periods(raw_periods: dict, year: int = 2026) -> dict:
@@ -378,13 +494,8 @@ def collect_employees_from_sources(raw_dir: str, txt_path: str, target_names: li
                 if not bn.startswith("~$") and bn != ".DS_Store":
                     raw_files.append(fp)
 
-    raw_files.sort(
-        key=lambda p: (
-            0 if re.search(r"(20\d{2}年\d{1,2}月|\d{1,2}月\d{1,2}日)", os.path.basename(p)) else 1,
-            -os.path.getmtime(p),
-        )
-    )
-    logs.append(f"掃描原檔目錄：{raw_dir}（共 {len(raw_files)} 個檔案）")
+    raw_files.sort(key=lambda p: (-os.path.getmtime(p), os.path.basename(p)))
+    logs.append(f"讀取後台班表原檔目錄：{raw_dir}（共 {len(raw_files)} 個底稿檔案）")
 
     for fp in raw_files:
         remaining = [n for n in target_names if normalize_name(n) not in seen_names]
@@ -400,7 +511,7 @@ def collect_employees_from_sources(raw_dir: str, txt_path: str, target_names: li
                 if item["name"] not in seen_names:
                     collected.append(item)
                     seen_names.add(item["name"])
-                    logs.append(f"命中【{item['name']}】← {os.path.basename(fp)} ({unit}/{pos})")
+                    logs.append(f"命中【{item['name']}】← 後台底稿 {os.path.basename(fp)} ({unit}/{pos})")
         except Exception as e:
             logs.append(f"解析檔案失敗 {os.path.basename(fp)}：{e}")
 
@@ -774,3 +885,6 @@ def send_email_notification(
         return True, f"已寄送至【{clean_name}】({recipient})"
     except Exception as e:
         return False, f"寄送【{clean_name}】失敗：{e}"
+EOF
+
+"$VENV_PY" -m py_compile "$V2_DIR/schedule_plotter.py" "$V2_DIR/streamlit_app.py" && echo "語法檢查通過"
