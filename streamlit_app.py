@@ -514,6 +514,7 @@ with st.sidebar:
     active_group = st.selectbox("快速分類群組", options=group_options, index=0)
     filtered_options = group_map.get(active_group, all_selectable_names)
 
+    batch_limit = FREQUENT_MEMBER_MAX_BATCH if (is_admin or is_frequent_member) else NON_FREQUENT_MAX_BATCH
     ms_key = f"ms_{active_group}"
     allowed_set = set(filtered_options)
 
