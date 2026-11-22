@@ -135,12 +135,20 @@ def load_pending_requests() -> list[dict]:
     return []
 
 
-def save_pending_requests(requests: list[dict]):
+def save_pending_requests(requests: list[dict]) -> tuple[bool, str]:
     try:
         with open(PENDING_REQUESTS_PATH, "w", encoding="utf-8") as f:
             json.dump(requests, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
+        gh_token, gh_repo, gh_branch = get_github_sync_config()
+        return sync_file_to_github(
+            local_file_path=PENDING_REQUESTS_PATH,
+            repo_rel_path=os.path.basename(PENDING_REQUESTS_PATH),
+            github_token=gh_token,
+            github_repo=gh_repo,
+            branch=gh_branch,
+        )
+    except Exception as e:
+        return False, f"儲存待審核清單失敗：{e}"
 
 
 def submit_frequent_request(name: str, email_or_acct: str, note: str = "") -> tuple[bool, str]:
@@ -576,9 +584,13 @@ with st.sidebar:
                             ok_add, msg_add = append_or_update_friend_email(r_name, r_mail, CURRENT_DIR)
                             if ok_add:
                                 _, gh_msg = sync_roster_file_to_github()
+                                next_freq = list(dict.fromkeys(frequent_list_names + [r_name]))
+                                _, gh_freq_msg = save_frequent_list(next_freq)
                                 updated_reqs = [x for i, x in enumerate(pending_reqs) if i != idx_r]
                                 save_pending_requests(updated_reqs)
-                                st.session_state["roster_sync_notice"] = f"已核准【{r_name}】加入常用名單（{gh_msg}）"
+                                st.session_state["roster_sync_notice"] = (
+                                    f"已核准【{r_name}】加入常用名單與發送名單（{gh_msg}｜{gh_freq_msg}）"
+                                )
                                 st.rerun()
                             else:
                                 st.error(msg_add)
