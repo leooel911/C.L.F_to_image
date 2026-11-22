@@ -1,7 +1,3 @@
-V2_DIR="/Users/clf/Desktop/讀班系統/20號自動抄寫系統/CLF班表出圖系統_V2"
-VENV_PY="/Users/clf/Desktop/讀班系統/20號自動抄寫系統/.venv/bin/python3"
-
-cat << 'EOF' > "$V2_DIR/schedule_plotter.py"
 #!/usr/bin/env python3
 """
 班表圖檔核心引擎：支援「班表原檔」自動辨識單位/職位、同單位同職位覆蓋、略過重複出圖、輸出至「班表圖檔」與郵件通知。
@@ -885,6 +881,3 @@ def send_email_notification(
         return True, f"已寄送至【{clean_name}】({recipient})"
     except Exception as e:
         return False, f"寄送【{clean_name}】失敗：{e}"
-EOF
-
-"$VENV_PY" -m py_compile "$V2_DIR/schedule_plotter.py" "$V2_DIR/streamlit_app.py" && echo "語法檢查通過"
