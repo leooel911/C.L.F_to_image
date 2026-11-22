@@ -365,12 +365,17 @@ with st.sidebar:
             st.session_state["selected_targets"] = []
             st.rerun()
 
-    valid_current_selection = [n for n in st.session_state["selected_targets"] if n in all_selectable_names]
+    ms_key = f"ms_{active_group}"
+    allowed_set = set(filtered_options)
+    valid_current_selection = [n for n in st.session_state["selected_targets"] if n in allowed_set]
+    if ms_key in st.session_state:
+        st.session_state[ms_key] = [n for n in st.session_state[ms_key] if n in allowed_set]
+    else:
+        st.session_state[ms_key] = valid_current_selection
     selected_friends = st.multiselect(
         f"勾選／搜尋人員（{active_group}・{len(filtered_options)}人）",
         options=filtered_options,
-        default=valid_current_selection,
-        key=f"ms_{active_group}",
+        key=ms_key,
     )
 
     other_selected = [
