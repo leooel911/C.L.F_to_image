@@ -506,6 +506,11 @@ all_sheet_names = [item["name"] for item in sheet_employees]
 group_map["班表全部人員"] = list(dict.fromkeys(all_roster_names + all_sheet_names))
 all_selectable_names = group_map["班表全部人員"]
 
+is_admin = bool(st.session_state.get("is_admin", False))
+active_frequent_user = normalize_name(st.session_state.get("frequent_member_name", ""))
+is_frequent_member = bool(active_frequent_user and active_frequent_user in all_roster_names)
+batch_limit = FREQUENT_MEMBER_MAX_BATCH if (is_admin or is_frequent_member) else NON_FREQUENT_MAX_BATCH
+
 with st.sidebar:
     st.header("出圖與名單設定")
     st.caption(f"底稿 {len(all_sheet_names)} 人｜名單 {len(all_roster_names)} 人")
