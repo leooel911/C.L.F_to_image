@@ -75,6 +75,9 @@ def save_frequent_list(names: list[str]) -> tuple[bool, str]:
 
 MEMBER_MAX_BATCH = 20
 
+NON_FREQUENT_MAX_BATCH = 1
+FREQUENT_MEMBER_MAX_BATCH = 6
+
 st.set_page_config(
     page_title="C.L.F 勤務班表出圖與通知系統 V2",
     page_icon="🗓️",
