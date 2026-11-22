@@ -33,6 +33,7 @@ from schedule_plotter import (
 )
 
 LAST_BATCH_PATH = os.path.join(CURRENT_DIR, ".last_batch.json")
+CORE_FREQUENT_NAMES = ["江立夫", "黃淨茵", "李沛迪", "耿瑞騏", "王婷禾", "符湘君"]
 
 st.set_page_config(
     page_title="C.L.F 勤務班表出圖與通知系統 V2",
@@ -131,8 +132,29 @@ def normalize_mail_input(raw_mail: str, default_domain: str = "@thsrc.com.tw") -
 
 def parse_bulk_roster_lines(bulk_text: str, default_domain: str = "@thsrc.com.tw") -> list[tuple[str, str]]:
     parsed = []
+    seen_names = set()
     if not bulk_text:
         return parsed
+
+    paren_matches = re.findall(
+        r"([A-Za-z0-9._+-]+(?:@[^,;\s()（）<>]+)?)\s*[\(（]([^\)）]+)[\)）](?:\s*<([^>]+)>)?",
+        bulk_text,
+    )
+    if paren_matches:
+        for acct_raw, name_raw, angle_mail in paren_matches:
+            acct = acct_raw.strip()
+            emp_name = normalize_name(name_raw)
+            if not emp_name or emp_name in seen_names:
+                continue
+            if "_MBOX" in acct.upper() or "北區運轉課" in name_raw:
+                continue
+            mail_part = (angle_mail or "").strip() or normalize_mail_input(acct, default_domain=default_domain)
+            if "@" in mail_part:
+                seen_names.add(emp_name)
+                parsed.append((emp_name, mail_part))
+        if parsed:
+            return parsed
+
     for line in bulk_text.splitlines():
         s = line.strip()
         if not s or s.startswith("#"):
@@ -141,7 +163,8 @@ def parse_bulk_roster_lines(bulk_text: str, default_domain: str = "@thsrc.com.tw
         if len(parts) == 2:
             name_part = normalize_name(parts[0])
             mail_part = normalize_mail_input(parts[1], default_domain=default_domain)
-            if name_part and mail_part:
+            if name_part and mail_part and name_part not in seen_names:
+                seen_names.add(name_part)
                 parsed.append((name_part, mail_part))
     return parsed
 
@@ -155,6 +178,65 @@ def build_zip_bytes(records: list[dict]) -> bytes:
                 zf.write(img_path, arcname=os.path.basename(img_path))
     buf.seek(0)
     return buf.getvalue()
+
+
+@st.dialog("確認寄出班表郵件")
+def open_single_mail_confirm_dialog(emp_name: str, recipient: str, file_date_str: str, img_path: str, current_emails: dict, sender_email: str, sender_password: str):
+    st.markdown(f"**收件人員**：{emp_name}")
+    st.markdown(f"**收件信箱**：`{recipient or '未設定信箱'}`")
+    st.markdown(f"**班表起始日期**：`{file_date_str}`")
+    st.markdown(f"**附件圖檔**：`{os.path.basename(img_path)}`")
+    if img_path and os.path.exists(img_path):
+        st.image(img_path, use_container_width=True)
+
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("確認寄出", type="primary", use_container_width=True, disabled=not bool(recipient)):
+            with st.spinner(f"正在寄送給 {emp_name}..."):
+                ok, msg = send_email_notification(
+                    file_path=img_path,
+                    emp_name=emp_name,
+                    file_date_str=file_date_str,
+                    friend_emails=current_emails,
+                    sender_email=sender_email,
+                    sender_password=sender_password,
+                )
+            st.session_state["last_mail_feedback"] = ("success" if ok else "error", msg)
+            st.rerun()
+    with c2:
+        if st.button("取消", use_container_width=True):
+            st.rerun()
+
+
+@st.dialog("確認批次寄出全部人員班表")
+def open_batch_mail_confirm_dialog(valid_records: list[dict], current_emails: dict, sender_email: str, sender_password: str):
+    st.markdown(f"即將寄出共 **{len(valid_records)}** 份班表圖檔，請再次確認收件對象：")
+    for r in valid_records:
+        nm = r.get("name", "")
+        dt = r.get("file_date_str", "")
+        rcpt = current_emails.get(normalize_name(nm), "未設定信箱")
+        st.caption(f"• **{nm}**（{dt}）→ `{rcpt}`")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("確認全部寄出", type="primary", use_container_width=True):
+            sent_ok, sent_fail = [], []
+            with st.spinner("正在批次寄送班表信件..."):
+                for rec in valid_records:
+                    ok, msg = send_email_notification(
+                        file_path=rec["image_path"],
+                        emp_name=rec["name"],
+                        file_date_str=rec["file_date_str"],
+                        friend_emails=current_emails,
+                        sender_email=sender_email,
+                        sender_password=sender_password,
+                    )
+                    (sent_ok if ok else sent_fail).append(msg)
+            st.session_state["batch_mail_results"] = {"ok": sent_ok, "fail": sent_fail}
+            st.rerun()
+    with c2:
+        if st.button("取消", use_container_width=True):
+            st.rerun()
 
 
 def render_single_record_card(rec: dict, idx: int, current_emails: dict, sender_email: str, sender_password: str):
@@ -189,19 +271,15 @@ def render_single_record_card(rec: dict, idx: int, current_emails: dict, sender_
                     key=f"send_{idx}_{emp_name}",
                     use_container_width=True,
                 ):
-                    with st.spinner(f"正在寄送給 {emp_name}..."):
-                        ok, msg = send_email_notification(
-                            file_path=img_path,
-                            emp_name=emp_name,
-                            file_date_str=file_date_str,
-                            friend_emails=current_emails,
-                            sender_email=sender_email,
-                            sender_password=sender_password,
-                        )
-                    if ok:
-                        st.success(msg)
-                    else:
-                        st.error(msg)
+                    open_single_mail_confirm_dialog(
+                        emp_name=emp_name,
+                        recipient=recipient,
+                        file_date_str=file_date_str,
+                        img_path=img_path,
+                        current_emails=current_emails,
+                        sender_email=sender_email,
+                        sender_password=sender_password,
+                    )
         else:
             st.warning(f"找不到圖檔：{img_path}")
 
@@ -220,17 +298,41 @@ if "selected_targets" not in st.session_state:
 if "roster_sync_notice" not in st.session_state:
     st.session_state["roster_sync_notice"] = ""
 
+if "last_mail_feedback" not in st.session_state:
+    st.session_state["last_mail_feedback"] = None
+
+if "batch_mail_results" not in st.session_state:
+    st.session_state["batch_mail_results"] = None
+
 os.makedirs(DEFAULT_RAW_DIR, exist_ok=True)
 
 st.title("C.L.F 勤務班表出圖與郵件通知系統 V2")
-st.caption("支援後台留存底稿（同單位同職位覆蓋）、分類精簡快選、名單同步 GitHub、分頁檢視與 ZIP 下載")
+st.caption("支援後台留存底稿（同單位同職位覆蓋）、細分群組快選、寄信前確認視窗、分頁檢視與 ZIP 下載")
+
+if st.session_state.get("last_mail_feedback"):
+    fb_type, fb_msg = st.session_state["last_mail_feedback"]
+    if fb_type == "success":
+        st.success(fb_msg)
+    else:
+        st.error(fb_msg)
+    st.session_state["last_mail_feedback"] = None
+
+if st.session_state.get("batch_mail_results"):
+    res_obj = st.session_state["batch_mail_results"]
+    for m in res_obj.get("ok", []):
+        st.success(m)
+    for m in res_obj.get("fail", []):
+        st.error(m)
+    st.session_state["batch_mail_results"] = None
 
 friend_emails = load_friend_emails(CURRENT_DIR)
-frequent_names = list(dict.fromkeys(["江立夫"] + list(friend_emails.keys())))
+all_roster_names = list(dict.fromkeys(["江立夫"] + list(friend_emails.keys())))
+core_frequent_names = [n for n in CORE_FREQUENT_NAMES if n in all_roster_names] or all_roster_names[:6]
 sheet_employees = extract_all_employees_from_sources(DEFAULT_RAW_DIR, DEFAULT_TXT_PATH)
 
 group_map: dict[str, list[str]] = {
-    "常用 / 發送名單": frequent_names,
+    "常用核心（6人）": core_frequent_names,
+    "已存信箱名單": all_roster_names,
 }
 for item in sheet_employees:
     u_code = item.get("unit", "TTN")
@@ -241,12 +343,12 @@ for item in sheet_employees:
         group_map[g_key].append(item["name"])
 
 all_sheet_names = [item["name"] for item in sheet_employees]
-group_map["班表全部人員"] = list(dict.fromkeys(frequent_names + all_sheet_names))
+group_map["班表全部人員"] = list(dict.fromkeys(all_roster_names + all_sheet_names))
 all_selectable_names = group_map["班表全部人員"]
 
 with st.sidebar:
     st.header("出圖與名單設定")
-    st.caption(f"底稿 {len(all_sheet_names)} 人｜常用 {len(frequent_names)} 人")
+    st.caption(f"底稿 {len(all_sheet_names)} 人｜已存信箱 {len(all_roster_names)} 人")
 
     group_options = list(group_map.keys())
     active_group = st.selectbox("快速分類群組", options=group_options, index=0)
@@ -277,13 +379,15 @@ with st.sidebar:
     ]
     st.session_state["selected_targets"] = list(dict.fromkeys(other_selected + selected_friends))
 
-    with st.expander(f"檢視 {active_group} 名單明細（{len(filtered_options)} 人）", expanded=False):
-        if active_group == "常用 / 發送名單":
-            for person in filtered_options:
+    with st.expander(f"檢視 {active_group} 明單明細（{len(filtered_options)} 人）", expanded=False):
+        if active_group in ("常用核心（6人）", "已存信箱名單"):
+            for person in filtered_options[:60]:
                 mail_addr = friend_emails.get(person, "未設定信箱")
                 st.caption(f"• {person} — `{mail_addr}`")
+            if len(filtered_options) > 60:
+                st.caption(f"...其餘 {len(filtered_options) - 60} 人請在上方下拉框直接搜尋姓名。")
         else:
-            st.caption("、".join(filtered_options))
+            st.caption("、".join(filtered_options[:80]) + (" ..." if len(filtered_options) > 80 else ""))
 
     if st.session_state["selected_targets"]:
         st.caption(
@@ -384,7 +488,7 @@ with st.sidebar:
                     st.rerun()
 
     with st.expander("目前發送名單一覽"):
-        for person, mail in load_friend_emails(CURRENT_DIR).items():
+        for person, mail in list(load_friend_emails(CURRENT_DIR).items())[:60]:
             st.write(f"- **{person}**：`{mail}`")
 
 st.subheader("1. 後台班表底稿管理與上傳覆蓋")
@@ -493,22 +597,12 @@ else:
             )
     with top_c3:
         if st.button("批次寄出全部人員班表", use_container_width=True):
-            sent_ok, sent_fail = [], []
-            with st.spinner("正在批次寄送班表信件..."):
-                for rec in valid_records:
-                    ok, msg = send_email_notification(
-                        file_path=rec["image_path"],
-                        emp_name=rec["name"],
-                        file_date_str=rec["file_date_str"],
-                        friend_emails=current_emails,
-                        sender_email=sender_email,
-                        sender_password=sender_password,
-                    )
-                    (sent_ok if ok else sent_fail).append(msg)
-            for m in sent_ok:
-                st.success(m)
-            for m in sent_fail:
-                st.error(m)
+            open_batch_mail_confirm_dialog(
+                valid_records=valid_records,
+                current_emails=current_emails,
+                sender_email=sender_email,
+                sender_password=sender_password,
+            )
 
     if view_mode == "分頁切換（推薦多人）" and len(valid_records) > 1:
         tab_labels = [f"{r.get('name', '')} ({r.get('file_date_str', '')})" for r in records]
