@@ -410,9 +410,11 @@ def render_single_record_card(
 
 
 if "batch_records" not in st.session_state or "batch_logs" not in st.session_state:
-    init_records, init_logs = load_last_batch()
-    st.session_state["batch_records"] = init_records
-    st.session_state["batch_logs"] = init_logs
+    st.session_state["batch_records"] = []
+    st.session_state["batch_logs"] = []
+
+if "last_batch_loaded_for_admin" not in st.session_state:
+    st.session_state["last_batch_loaded_for_admin"] = False
 
 if "upload_dir" not in st.session_state:
     st.session_state["upload_dir"] = tempfile.mkdtemp(prefix="clf_roster_uploads_")
@@ -439,6 +441,14 @@ os.makedirs(DEFAULT_RAW_DIR, exist_ok=True)
 
 is_admin = bool(st.session_state.get("is_admin", False))
 pending_reqs = load_pending_requests()
+
+if bool(st.session_state.get("is_admin", False)) and not st.session_state.get("last_batch_loaded_for_admin", False):
+    hist_records, hist_logs = load_last_batch()
+    if hist_records and not st.session_state.get("batch_records"):
+        st.session_state["batch_records"] = hist_records
+    if hist_logs and not st.session_state.get("batch_logs"):
+        st.session_state["batch_logs"] = hist_logs
+    st.session_state["last_batch_loaded_for_admin"] = True
 
 st.title("C.L.F 勤務班表出圖與郵件通知系統 V2")
 if is_admin:
