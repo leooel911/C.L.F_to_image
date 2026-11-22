@@ -515,6 +515,10 @@ with st.sidebar:
     filtered_options = group_map.get(active_group, all_selectable_names)
 
     batch_limit = FREQUENT_MEMBER_MAX_BATCH if (is_admin or is_frequent_member) else NON_FREQUENT_MAX_BATCH
+    is_admin = bool(st.session_state.get("is_admin", False))
+    active_frequent_user = normalize_name(st.session_state.get("frequent_member_name", ""))
+    is_frequent_member = bool(active_frequent_user and active_frequent_user in all_roster_names)
+    batch_limit = FREQUENT_MEMBER_MAX_BATCH if (is_admin or is_frequent_member) else NON_FREQUENT_MAX_BATCH
     ms_key = f"ms_{active_group}"
     allowed_set = set(filtered_options)
 
