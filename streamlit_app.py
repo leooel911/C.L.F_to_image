@@ -514,39 +514,50 @@ with st.sidebar:
     active_group = st.selectbox("快速分類群組", options=group_options, index=0)
     filtered_options = group_map.get(active_group, all_selectable_names)
 
-    btn_c1, btn_c2 = st.columns(2)
-    with btn_c1:
-        if st.button("加入此分類", use_container_width=True):
-            merged = list(dict.fromkeys(st.session_state["selected_targets"] + filtered_options))
-            if not is_admin and len(merged) > MEMBER_MAX_BATCH:
-                merged = merged[:MEMBER_MAX_BATCH]
-                st.toast(f"組員模式單次最多 {MEMBER_MAX_BATCH} 人，已自動截取前 {MEMBER_MAX_BATCH} 位。")
-            st.session_state["selected_targets"] = merged
-            st.rerun()
-    with btn_c2:
-        if st.button("清空已選", use_container_width=True):
-            st.session_state["selected_targets"] = []
-            st.rerun()
-
     ms_key = f"ms_{active_group}"
     allowed_set = set(filtered_options)
-    valid_current_selection = [n for n in st.session_state["selected_targets"] if n in allowed_set]
-    if ms_key in st.session_state:
-        st.session_state[ms_key] = [n for n in st.session_state[ms_key] if n in allowed_set]
+
+    # 僅在該群組 key 尚未建立時初始化，避免每次重跑覆寫使用者按小叉叉的結果
+    if ms_key not in st.session_state:
+        st.session_state[ms_key] = [n for n in st.session_state["selected_targets"] if n in allowed_set]
     else:
-        st.session_state[ms_key] = valid_current_selection
+        st.session_state[ms_key] = [n for n in st.session_state[ms_key] if n in allowed_set]
+
+    def _sync_from_multiselect():
+        picked = st.session_state.get(ms_key, [])
+        others = [
+            n for n in st.session_state["selected_targets"]
+            if n not in allowed_set and n in all_selectable_names
+        ]
+        merged = list(dict.fromkeys(others + picked))
+        if not is_admin and len(merged) > batch_limit:
+            merged = merged[:batch_limit]
+            st.session_state[ms_key] = [n for n in merged if n in allowed_set]
+        st.session_state["selected_targets"] = merged
 
     selected_friends = st.multiselect(
-        f"勾選／搜尋人員（{active_group}・{len(filtered_options)}人）",
+        f"勾選／搜尋人員（{active_group}・{len(filtered_options)} 人）",
         options=filtered_options,
         key=ms_key,
+        on_change=_sync_from_multiselect,
     )
 
     other_selected = [
         n for n in st.session_state["selected_targets"]
-        if n not in filtered_options and n in all_selectable_names
+        if n not in allowed_set and n in all_selectable_names
     ]
-    st.session_state["selected_targets"] = list(dict.fromkeys(other_selected + selected_friends))
+    combined_sel = list(dict.fromkeys(other_selected + selected_friends))
+    if not is_admin and len(combined_sel) > batch_limit:
+        combined_sel = combined_sel[:batch_limit]
+    st.session_state["selected_targets"] = combined_sel
+
+    if st.session_state["selected_targets"]:
+        if st.button("清空已選", use_container_width=True):
+            st.session_state["selected_targets"] = []
+            for k in list(st.session_state.keys()):
+                if str(k).startswith("ms_"):
+                    st.session_state[k] = []
+            st.rerun()
 
     if st.session_state["selected_targets"]:
         st.caption(
