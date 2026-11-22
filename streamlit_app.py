@@ -419,6 +419,8 @@ if "last_batch_loaded_for_admin" not in st.session_state:
 if "upload_dir" not in st.session_state:
     st.session_state["upload_dir"] = tempfile.mkdtemp(prefix="clf_roster_uploads_")
 
+if "ms_epoch" not in st.session_state:
+    st.session_state["ms_epoch"] = 0
 if "selected_targets" not in st.session_state:
     st.session_state["selected_targets"] = ["江立夫"]
 
@@ -533,23 +535,25 @@ with st.sidebar:
     filtered_options = group_map.get(active_group, all_selectable_names)
 
     batch_limit = FREQUENT_MEMBER_MAX_BATCH if (is_admin or is_frequent_member) else NON_FREQUENT_MAX_BATCH
-    is_admin = bool(st.session_state.get("is_admin", False))
-    active_frequent_user = normalize_name(st.session_state.get("frequent_member_name", ""))
-    is_frequent_member = bool(active_frequent_user and active_frequent_user in all_roster_names)
-    batch_limit = FREQUENT_MEMBER_MAX_BATCH if (is_admin or is_frequent_member) else NON_FREQUENT_MAX_BATCH
-    ms_key = f"ms_{active_group}"
+    ms_epoch = int(st.session_state.get("ms_epoch", 0))
+    ms_key = f"ms_{ms_epoch}_{active_group}"
     allowed_set = set(filtered_options)
 
-    # 僅在該群組 key 尚未建立時初始化，避免每次重跑覆寫使用者按小叉叉的結果
-    if ms_key not in st.session_state:
-        st.session_state[ms_key] = [n for n in st.session_state["selected_targets"] if n in allowed_set]
-    else:
-        st.session_state[ms_key] = [n for n in st.session_state[ms_key] if n in allowed_set]
+    current_targets = [
+        n for n in st.session_state.get("selected_targets", [])
+        if n in all_selectable_names
+    ]
+    if not is_admin and len(current_targets) > batch_limit:
+        current_targets = current_targets[:batch_limit]
+    st.session_state["selected_targets"] = current_targets
 
-    def _sync_from_multiselect():
-        picked = st.session_state.get(ms_key, [])
+    if ms_key not in st.session_state:
+        st.session_state[ms_key] = [n for n in current_targets if n in allowed_set]
+
+    def _on_multiselect_change():
+        picked = [n for n in st.session_state.get(ms_key, []) if n in allowed_set]
         others = [
-            n for n in st.session_state["selected_targets"]
+            n for n in st.session_state.get("selected_targets", [])
             if n not in allowed_set and n in all_selectable_names
         ]
         merged = list(dict.fromkeys(others + picked))
@@ -558,28 +562,17 @@ with st.sidebar:
             st.session_state[ms_key] = [n for n in merged if n in allowed_set]
         st.session_state["selected_targets"] = merged
 
-    selected_friends = st.multiselect(
+    st.multiselect(
         f"勾選／搜尋人員（{active_group}・{len(filtered_options)} 人）",
         options=filtered_options,
         key=ms_key,
-        on_change=_sync_from_multiselect,
+        on_change=_on_multiselect_change,
     )
 
-    other_selected = [
-        n for n in st.session_state["selected_targets"]
-        if n not in allowed_set and n in all_selectable_names
-    ]
-    combined_sel = list(dict.fromkeys(other_selected + selected_friends))
-    if not is_admin and len(combined_sel) > batch_limit:
-        combined_sel = combined_sel[:batch_limit]
-    st.session_state["selected_targets"] = combined_sel
-
-    if st.session_state["selected_targets"]:
+    if st.session_state.get("selected_targets"):
         if st.button("清空已選", use_container_width=True):
             st.session_state["selected_targets"] = []
-            for k in list(st.session_state.keys()):
-                if str(k).startswith("ms_"):
-                    st.session_state[k] = []
+            st.session_state["ms_epoch"] = ms_epoch + 1
             st.rerun()
 
     if st.session_state["selected_targets"]:
