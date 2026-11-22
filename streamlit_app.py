@@ -3,6 +3,7 @@
 C.L.F 勤務班表出圖與郵件通知系統（雲端／手機操作版 V2）
 """
 
+import hmac
 import io
 import json
 import os
@@ -34,6 +35,7 @@ from schedule_plotter import (
 
 LAST_BATCH_PATH = os.path.join(CURRENT_DIR, ".last_batch.json")
 CORE_FREQUENT_NAMES = ["江立夫", "黃淨茵", "李沛迪", "耿瑞騏", "王婷禾", "符湘君"]
+MEMBER_MAX_BATCH = 20
 
 st.set_page_config(
     page_title="C.L.F 勤務班表出圖與通知系統 V2",
@@ -42,35 +44,33 @@ st.set_page_config(
 )
 
 
-def get_mail_credentials() -> tuple[str, str]:
-    sender_email = os.environ.get("MAIL_SENDER_EMAIL", "").strip()
-    sender_password = os.environ.get("MAIL_SENDER_PASSWORD", "").strip()
+def get_secret_or_env(key: str, default: str = "") -> str:
+    val = os.environ.get(key, "").strip()
     try:
-        if not sender_email and "MAIL_SENDER_EMAIL" in st.secrets:
-            sender_email = str(st.secrets["MAIL_SENDER_EMAIL"]).strip()
-        if not sender_password and "MAIL_SENDER_PASSWORD" in st.secrets:
-            sender_password = str(st.secrets["MAIL_SENDER_PASSWORD"]).strip()
+        if not val and key in st.secrets:
+            val = str(st.secrets[key]).strip()
     except Exception:
         pass
-    return (
-        sender_email or DEFAULT_SENDER_EMAIL,
-        sender_password or DEFAULT_SENDER_PASSWORD,
-    )
+    return val or default
+
+
+def verify_admin_pin(candidate_pin: str) -> bool:
+    configured_pin = get_secret_or_env("ADMIN_PIN", "")
+    if not configured_pin or not candidate_pin:
+        return False
+    return hmac.compare_digest(candidate_pin.strip(), configured_pin)
+
+
+def get_mail_credentials() -> tuple[str, str]:
+    sender_email = get_secret_or_env("MAIL_SENDER_EMAIL", DEFAULT_SENDER_EMAIL)
+    sender_password = get_secret_or_env("MAIL_SENDER_PASSWORD", DEFAULT_SENDER_PASSWORD)
+    return sender_email, sender_password
 
 
 def get_github_sync_config() -> tuple[str, str, str]:
-    token = os.environ.get("GITHUB_TOKEN", "").strip()
-    repo = os.environ.get("GITHUB_REPO", "leooel911/C.L.F_to_image").strip()
-    branch = os.environ.get("GITHUB_BRANCH", "main").strip()
-    try:
-        if not token and "GITHUB_TOKEN" in st.secrets:
-            token = str(st.secrets["GITHUB_TOKEN"]).strip()
-        if "GITHUB_REPO" in st.secrets:
-            repo = str(st.secrets["GITHUB_REPO"]).strip()
-        if "GITHUB_BRANCH" in st.secrets:
-            branch = str(st.secrets["GITHUB_BRANCH"]).strip()
-    except Exception:
-        pass
+    token = get_secret_or_env("GITHUB_TOKEN", "")
+    repo = get_secret_or_env("GITHUB_REPO", "leooel911/C.L.F_to_image")
+    branch = get_secret_or_env("GITHUB_BRANCH", "main")
     return token, repo, branch
 
 
@@ -181,7 +181,15 @@ def build_zip_bytes(records: list[dict]) -> bytes:
 
 
 @st.dialog("確認寄出班表郵件")
-def open_single_mail_confirm_dialog(emp_name: str, recipient: str, file_date_str: str, img_path: str, current_emails: dict, sender_email: str, sender_password: str):
+def open_single_mail_confirm_dialog(
+    emp_name: str,
+    recipient: str,
+    file_date_str: str,
+    img_path: str,
+    current_emails: dict,
+    sender_email: str,
+    sender_password: str,
+):
     st.markdown(f"**收件人員**：{emp_name}")
     st.markdown(f"**收件信箱**：`{recipient or '未設定信箱'}`")
     st.markdown(f"**班表起始日期**：`{file_date_str}`")
@@ -209,7 +217,12 @@ def open_single_mail_confirm_dialog(emp_name: str, recipient: str, file_date_str
 
 
 @st.dialog("確認批次寄出全部人員班表")
-def open_batch_mail_confirm_dialog(valid_records: list[dict], current_emails: dict, sender_email: str, sender_password: str):
+def open_batch_mail_confirm_dialog(
+    valid_records: list[dict],
+    current_emails: dict,
+    sender_email: str,
+    sender_password: str,
+):
     st.markdown(f"即將寄出共 **{len(valid_records)}** 份班表圖檔，請再次確認收件對象：")
     for r in valid_records:
         nm = r.get("name", "")
@@ -239,7 +252,14 @@ def open_batch_mail_confirm_dialog(valid_records: list[dict], current_emails: di
             st.rerun()
 
 
-def render_single_record_card(rec: dict, idx: int, current_emails: dict, sender_email: str, sender_password: str):
+def render_single_record_card(
+    rec: dict,
+    idx: int,
+    current_emails: dict,
+    sender_email: str,
+    sender_password: str,
+    is_admin: bool,
+):
     emp_name = rec.get("name", "")
     file_date_str = rec.get("file_date_str", "")
     img_path = rec.get("image_path", "")
@@ -253,8 +273,34 @@ def render_single_record_card(rec: dict, idx: int, current_emails: dict, sender_
             with open(img_path, "rb") as img_f:
                 img_bytes = img_f.read()
 
-            c_dl, c_mail = st.columns([1, 1])
-            with c_dl:
+            if is_admin:
+                c_dl, c_mail = st.columns([1, 1])
+                with c_dl:
+                    st.download_button(
+                        label="下載班表圖片",
+                        data=img_bytes,
+                        file_name=os.path.basename(img_path),
+                        mime="image/png",
+                        key=f"dl_{idx}_{emp_name}",
+                        use_container_width=True,
+                    )
+                recipient = current_emails.get(normalize_name(emp_name), "")
+                with c_mail:
+                    if st.button(
+                        f"寄送信件給 {emp_name}" + (f"（{recipient}）" if recipient else "（未設定信箱）"),
+                        key=f"send_{idx}_{emp_name}",
+                        use_container_width=True,
+                    ):
+                        open_single_mail_confirm_dialog(
+                            emp_name=emp_name,
+                            recipient=recipient,
+                            file_date_str=file_date_str,
+                            img_path=img_path,
+                            current_emails=current_emails,
+                            sender_email=sender_email,
+                            sender_password=sender_password,
+                        )
+            else:
                 st.download_button(
                     label="下載班表圖片",
                     data=img_bytes,
@@ -263,23 +309,6 @@ def render_single_record_card(rec: dict, idx: int, current_emails: dict, sender_
                     key=f"dl_{idx}_{emp_name}",
                     use_container_width=True,
                 )
-
-            recipient = current_emails.get(normalize_name(emp_name), "")
-            with c_mail:
-                if st.button(
-                    f"寄送信件給 {emp_name}" + (f"（{recipient}）" if recipient else "（未設定信箱）"),
-                    key=f"send_{idx}_{emp_name}",
-                    use_container_width=True,
-                ):
-                    open_single_mail_confirm_dialog(
-                        emp_name=emp_name,
-                        recipient=recipient,
-                        file_date_str=file_date_str,
-                        img_path=img_path,
-                        current_emails=current_emails,
-                        sender_email=sender_email,
-                        sender_password=sender_password,
-                    )
         else:
             st.warning(f"找不到圖檔：{img_path}")
 
@@ -304,12 +333,20 @@ if "last_mail_feedback" not in st.session_state:
 if "batch_mail_results" not in st.session_state:
     st.session_state["batch_mail_results"] = None
 
+if "is_admin" not in st.session_state:
+    st.session_state["is_admin"] = False
+
 os.makedirs(DEFAULT_RAW_DIR, exist_ok=True)
 
-st.title("C.L.F 勤務班表出圖與郵件通知系統 V2")
-st.caption("支援後台留存底稿（同單位同職位覆蓋）、細分群組快選、寄信前確認視窗、分頁檢視與 ZIP 下載")
+is_admin = bool(st.session_state.get("is_admin", False))
 
-if st.session_state.get("last_mail_feedback"):
+st.title("C.L.F 勤務班表出圖與郵件通知系統 V2")
+if is_admin:
+    st.caption("目前身分：**管理員模式**｜支援底稿覆蓋、發送名單管理、寄信確認與分頁／ZIP 匯出")
+else:
+    st.caption("目前身分：**組員自助出圖模式**｜選擇人員或群組即可產生與下載班表圖檔")
+
+if is_admin and st.session_state.get("last_mail_feedback"):
     fb_type, fb_msg = st.session_state["last_mail_feedback"]
     if fb_type == "success":
         st.success(fb_msg)
@@ -317,7 +354,7 @@ if st.session_state.get("last_mail_feedback"):
         st.error(fb_msg)
     st.session_state["last_mail_feedback"] = None
 
-if st.session_state.get("batch_mail_results"):
+if is_admin and st.session_state.get("batch_mail_results"):
     res_obj = st.session_state["batch_mail_results"]
     for m in res_obj.get("ok", []):
         st.success(m)
@@ -348,7 +385,7 @@ all_selectable_names = group_map["班表全部人員"]
 
 with st.sidebar:
     st.header("出圖與名單設定")
-    st.caption(f"底稿 {len(all_sheet_names)} 人｜已存信箱 {len(all_roster_names)} 人")
+    st.caption(f"底稿 {len(all_sheet_names)} 人｜名單 {len(all_roster_names)} 人")
 
     group_options = list(group_map.keys())
     active_group = st.selectbox("快速分類群組", options=group_options, index=0)
@@ -358,6 +395,9 @@ with st.sidebar:
     with btn_c1:
         if st.button("加入此分類", use_container_width=True):
             merged = list(dict.fromkeys(st.session_state["selected_targets"] + filtered_options))
+            if not is_admin and len(merged) > MEMBER_MAX_BATCH:
+                merged = merged[:MEMBER_MAX_BATCH]
+                st.toast(f"組員模式單次最多 {MEMBER_MAX_BATCH} 人，已自動截取前 {MEMBER_MAX_BATCH} 位。")
             st.session_state["selected_targets"] = merged
             st.rerun()
     with btn_c2:
@@ -372,6 +412,7 @@ with st.sidebar:
         st.session_state[ms_key] = [n for n in st.session_state[ms_key] if n in allowed_set]
     else:
         st.session_state[ms_key] = valid_current_selection
+
     selected_friends = st.multiselect(
         f"勾選／搜尋人員（{active_group}・{len(filtered_options)}人）",
         options=filtered_options,
@@ -383,16 +424,6 @@ with st.sidebar:
         if n not in filtered_options and n in all_selectable_names
     ]
     st.session_state["selected_targets"] = list(dict.fromkeys(other_selected + selected_friends))
-
-    with st.expander(f"檢視 {active_group} 明單明細（{len(filtered_options)} 人）", expanded=False):
-        if active_group in ("常用核心（6人）", "已存信箱名單"):
-            for person in filtered_options[:60]:
-                mail_addr = friend_emails.get(person, "未設定信箱")
-                st.caption(f"• {person} — `{mail_addr}`")
-            if len(filtered_options) > 60:
-                st.caption(f"...其餘 {len(filtered_options) - 60} 人請在上方下拉框直接搜尋姓名。")
-        else:
-            st.caption("、".join(filtered_options[:80]) + (" ..." if len(filtered_options) > 80 else ""))
 
     if st.session_state["selected_targets"]:
         st.caption(
@@ -407,148 +438,181 @@ with st.sidebar:
         height=65,
         placeholder="例如：王小明, 陳小華",
     )
-    skip_unchanged = st.checkbox("略過未變動且已存在的班表圖", value=False)
-    force_regenerate = st.checkbox("強制重新繪製（忽略快取）", value=True)
-    sync_github_on_upload = st.checkbox("上傳覆蓋時同步更新 GitHub 底稿", value=True)
+
+    if is_admin:
+        with st.expander(f"檢視 {active_group} 名單明細（{len(filtered_options)} 人）", expanded=False):
+            if active_group in ("常用核心（6人）", "已存信箱名單"):
+                for person in filtered_options[:60]:
+                    mail_addr = friend_emails.get(person, "未設定信箱")
+                    st.caption(f"• {person} — `{mail_addr}`")
+            else:
+                st.caption("、".join(filtered_options[:80]) + (" ..." if len(filtered_options) > 80 else ""))
+
+        skip_unchanged = st.checkbox("略過未變動且已存在的班表圖", value=False)
+        force_regenerate = st.checkbox("強制重新繪製（忽略快取）", value=True)
+        sync_github_on_upload = st.checkbox("上傳覆蓋時同步更新 GitHub 底稿", value=True)
+
+        st.divider()
+        st.subheader("編輯／新增發送名單")
+        if st.session_state.get("roster_sync_notice"):
+            st.caption(st.session_state["roster_sync_notice"])
+
+        roster_mode = st.radio(
+            "操作模式",
+            options=["編輯／刪除現有名單", "快速新增／批次貼上"],
+            horizontal=True,
+        )
+
+        if roster_mode == "編輯／刪除現有名單":
+            existing_names = list(friend_emails.keys())
+            if existing_names:
+                target_edit_name = st.selectbox("選擇人員", options=existing_names, key="roster_edit_select")
+                edit_email_val = st.text_input(
+                    "電子信箱",
+                    value=friend_emails.get(target_edit_name, ""),
+                    key=f"roster_edit_email_{target_edit_name}",
+                )
+                ed_c1, ed_c2 = st.columns(2)
+                with ed_c1:
+                    if st.button("更新信箱", use_container_width=True):
+                        ok, msg = append_or_update_friend_email(target_edit_name, edit_email_val, CURRENT_DIR)
+                        if ok:
+                            _, gh_msg = sync_roster_file_to_github()
+                            st.session_state["roster_sync_notice"] = f"{msg}（{gh_msg}）"
+                            st.rerun()
+                        else:
+                            st.error(msg)
+                with ed_c2:
+                    if st.button("刪除人員", use_container_width=True):
+                        ok, msg = remove_friend_email(target_edit_name, CURRENT_DIR)
+                        if ok:
+                            _, gh_msg = sync_roster_file_to_github()
+                            st.session_state["roster_sync_notice"] = f"{msg}（{gh_msg}）"
+                            st.rerun()
+                        else:
+                            st.error(msg)
+            else:
+                st.caption("目前發送名單為空。")
+        else:
+            default_domain = st.text_input("預設信箱網域（未含 @ 時自動補上）", value="@thsrc.com.tw", key="roster_default_domain")
+            new_name = st.text_input("單筆姓名", key="roster_new_name", placeholder="例如：王小明")
+            new_email = st.text_input("單筆信箱或帳號前綴", key="roster_new_email", placeholder="例如：ming_wang 或 ming_wang@thsrc.com.tw")
+            if st.button("快速新增單筆", use_container_width=True):
+                final_mail = normalize_mail_input(new_email, default_domain=default_domain)
+                ok, msg = append_or_update_friend_email(new_name, final_mail, CURRENT_DIR)
+                if ok:
+                    _, gh_msg = sync_roster_file_to_github()
+                    st.session_state["roster_sync_notice"] = f"{msg}（{gh_msg}）"
+                    st.rerun()
+                else:
+                    st.error(msg)
+
+            bulk_text = st.text_area(
+                "批次貼上（每行一筆：姓名, 信箱或帳號）",
+                height=90,
+                key="roster_bulk_text",
+                placeholder="王小明, ming_wang\n陳小華: hua_chen@thsrc.com.tw",
+            )
+            if st.button("批次匯入名單", use_container_width=True):
+                items = parse_bulk_roster_lines(bulk_text, default_domain=default_domain)
+                if not items:
+                    st.error("請依「姓名, 信箱」格式輸入至少一行。")
+                else:
+                    ok_cnt, fail_msgs = 0, []
+                    for p_name, p_mail in items:
+                        ok, msg = append_or_update_friend_email(p_name, p_mail, CURRENT_DIR)
+                        if ok:
+                            ok_cnt += 1
+                        else:
+                            fail_msgs.append(msg)
+                    if ok_cnt:
+                        _, gh_msg = sync_roster_file_to_github()
+                        st.session_state["roster_sync_notice"] = f"已批次儲存 {ok_cnt} 筆名單（{gh_msg}）。"
+                    for fm_err in fail_msgs:
+                        st.error(fm_err)
+                    if ok_cnt:
+                        st.rerun()
+
+        with st.expander("目前發送名單一覽"):
+            for person, mail in list(load_friend_emails(CURRENT_DIR).items())[:60]:
+                st.write(f"- **{person}**：`{mail}`")
+    else:
+        skip_unchanged = False
+        force_regenerate = True
+        sync_github_on_upload = False
 
     st.divider()
-    st.subheader("編輯／新增發送名單")
-    if st.session_state.get("roster_sync_notice"):
-        st.caption(st.session_state["roster_sync_notice"])
+    with st.expander("管理員模式切換", expanded=False):
+        if is_admin:
+            st.success("已解鎖管理員模式")
+            if st.button("鎖定回組員模式", use_container_width=True):
+                st.session_state["is_admin"] = False
+                st.rerun()
+        else:
+            pin_input = st.text_input("輸入管理員 PIN 碼", type="password", key="admin_pin_input")
+            if st.button("解鎖管理員模式", use_container_width=True):
+                if verify_admin_pin(pin_input):
+                    st.session_state["is_admin"] = True
+                    st.rerun()
+                else:
+                    st.error("PIN 碼錯誤或尚未於 Secrets 設定 ADMIN_PIN。")
 
-    roster_mode = st.radio(
-        "操作模式",
-        options=["編輯／刪除現有名單", "快速新增／批次貼上"],
-        horizontal=True,
+if is_admin:
+    st.subheader("1. 後台班表底稿管理與上傳覆蓋")
+    stored_rosters = list_stored_rosters(DEFAULT_RAW_DIR)
+    if stored_rosters:
+        st.markdown("**後台已留存底稿（依同單位同職位自動覆蓋，出圖時免重傳）：**")
+        for item in stored_rosters:
+            st.caption(f"• `{item['filename']}`｜單位/職位：`{item['unit']}/{item['pos']}`｜更新時間：`{item['updated_at']}`")
+    else:
+        st.info("後台 `班表原檔` 目前尚無留存底稿。上傳班表檔案後，系統會依同單位同職位自動留存並覆蓋舊版。")
+
+    uploaded_files = st.file_uploader(
+        "上傳新的班表原檔（將自動覆蓋同單位同職位後台底稿，支援 .xls, .xlsx, .csv，可多選）",
+        type=["xls", "xlsx", "csv"],
+        accept_multiple_files=True,
     )
 
-    if roster_mode == "編輯／刪除現有名單":
-        existing_names = list(friend_emails.keys())
-        if existing_names:
-            target_edit_name = st.selectbox("選擇人員", options=existing_names, key="roster_edit_select")
-            edit_email_val = st.text_input(
-                "電子信箱",
-                value=friend_emails.get(target_edit_name, ""),
-                key=f"roster_edit_email_{target_edit_name}",
+    gh_token, gh_repo, gh_branch = get_github_sync_config()
+
+    if uploaded_files:
+        upload_dir = st.session_state["upload_dir"]
+        os.makedirs(upload_dir, exist_ok=True)
+        for uf in uploaded_files:
+            safe_name = os.path.basename(uf.name)
+            tmp_path = os.path.join(upload_dir, safe_name)
+            with open(tmp_path, "wb") as f:
+                f.write(uf.getbuffer())
+
+            dest_path, u_code, p_code, replaced = save_uploaded_roster_overwrite(
+                src_file_path=tmp_path,
+                original_filename=safe_name,
+                raw_dir=DEFAULT_RAW_DIR,
             )
-            ed_c1, ed_c2 = st.columns(2)
-            with ed_c1:
-                if st.button("更新信箱", use_container_width=True):
-                    ok, msg = append_or_update_friend_email(target_edit_name, edit_email_val, CURRENT_DIR)
-                    if ok:
-                        _, gh_msg = sync_roster_file_to_github()
-                        st.session_state["roster_sync_notice"] = f"{msg}（{gh_msg}）"
-                        st.rerun()
-                    else:
-                        st.error(msg)
-            with ed_c2:
-                if st.button("刪除人員", use_container_width=True):
-                    ok, msg = remove_friend_email(target_edit_name, CURRENT_DIR)
-                    if ok:
-                        _, gh_msg = sync_roster_file_to_github()
-                        st.session_state["roster_sync_notice"] = f"{msg}（{gh_msg}）"
-                        st.rerun()
-                    else:
-                        st.error(msg)
-        else:
-            st.caption("目前發送名單為空。")
-    else:
-        default_domain = st.text_input("預設信箱網域（未含 @ 時自動補上）", value="@thsrc.com.tw", key="roster_default_domain")
-        new_name = st.text_input("單筆姓名", key="roster_new_name", placeholder="例如：王小明")
-        new_email = st.text_input("單筆信箱或帳號前綴", key="roster_new_email", placeholder="例如：ming_wang 或 ming_wang@thsrc.com.tw")
-        if st.button("快速新增單筆", use_container_width=True):
-            final_mail = normalize_mail_input(new_email, default_domain=default_domain)
-            ok, msg = append_or_update_friend_email(new_name, final_mail, CURRENT_DIR)
-            if ok:
-                _, gh_msg = sync_roster_file_to_github()
-                st.session_state["roster_sync_notice"] = f"{msg}（{gh_msg}）"
-                st.rerun()
-            else:
-                st.error(msg)
+            action_txt = "已覆蓋同單位同職位舊底稿" if replaced else "已新增至後台底稿"
+            st.success(f"`{safe_name}` → `{os.path.basename(dest_path)}`（{u_code}/{p_code}，{action_txt}）")
 
-        bulk_text = st.text_area(
-            "批次貼上（每行一筆：姓名, 信箱或帳號）",
-            height=90,
-            key="roster_bulk_text",
-            placeholder="王小明, ming_wang\n陳小華: hua_chen@thsrc.com.tw",
-        )
-        if st.button("批次匯入名單", use_container_width=True):
-            items = parse_bulk_roster_lines(bulk_text, default_domain=default_domain)
-            if not items:
-                st.error("請依「姓名, 信箱」格式輸入至少一行。")
-            else:
-                ok_cnt, fail_msgs = 0, []
-                for p_name, p_mail in items:
-                    ok, msg = append_or_update_friend_email(p_name, p_mail, CURRENT_DIR)
-                    if ok:
-                        ok_cnt += 1
-                    else:
-                        fail_msgs.append(msg)
-                if ok_cnt:
-                    _, gh_msg = sync_roster_file_to_github()
-                    st.session_state["roster_sync_notice"] = f"已批次儲存 {ok_cnt} 筆名單（{gh_msg}）。"
-                for fm_err in fail_msgs:
-                    st.error(fm_err)
-                if ok_cnt:
-                    st.rerun()
-
-    with st.expander("目前發送名單一覽"):
-        for person, mail in list(load_friend_emails(CURRENT_DIR).items())[:60]:
-            st.write(f"- **{person}**：`{mail}`")
-
-st.subheader("1. 後台班表底稿管理與上傳覆蓋")
-stored_rosters = list_stored_rosters(DEFAULT_RAW_DIR)
-if stored_rosters:
-    st.markdown("**後台已留存底稿（依同單位同職位自動覆蓋，出圖時免重傳）：**")
-    for item in stored_rosters:
-        st.caption(f"• `{item['filename']}`｜單位/職位：`{item['unit']}/{item['pos']}`｜更新時間：`{item['updated_at']}`")
-else:
-    st.info("後台 `班表原檔` 目前尚無留存底稿。上傳班表檔案後，系統會依同單位同職位自動留存並覆蓋舊版。")
-
-uploaded_files = st.file_uploader(
-    "上傳新的班表原檔（將自動覆蓋同單位同職位後台底稿，支援 .xls, .xlsx, .csv，可多選）",
-    type=["xls", "xlsx", "csv"],
-    accept_multiple_files=True,
-)
-
-gh_token, gh_repo, gh_branch = get_github_sync_config()
-
-if uploaded_files:
-    upload_dir = st.session_state["upload_dir"]
-    os.makedirs(upload_dir, exist_ok=True)
-    for uf in uploaded_files:
-        safe_name = os.path.basename(uf.name)
-        tmp_path = os.path.join(upload_dir, safe_name)
-        with open(tmp_path, "wb") as f:
-            f.write(uf.getbuffer())
-
-        dest_path, u_code, p_code, replaced = save_uploaded_roster_overwrite(
-            src_file_path=tmp_path,
-            original_filename=safe_name,
-            raw_dir=DEFAULT_RAW_DIR,
-        )
-        action_txt = "已覆蓋同單位同職位舊底稿" if replaced else "已新增至後台底稿"
-        st.success(f"`{safe_name}` → `{os.path.basename(dest_path)}`（{u_code}/{p_code}，{action_txt}）")
-
-        if sync_github_on_upload:
-            repo_rel = f"班表原檔/{os.path.basename(dest_path)}"
-            ok_gh, msg_gh = sync_file_to_github(
-                local_file_path=dest_path,
-                repo_rel_path=repo_rel,
-                github_token=gh_token,
-                github_repo=gh_repo,
-                branch=gh_branch,
-            )
-            if ok_gh:
-                st.caption(f"☁️ {msg_gh}")
-            else:
-                st.caption(f"ℹ️ {msg_gh}")
+            if sync_github_on_upload:
+                repo_rel = f"班表原檔/{os.path.basename(dest_path)}"
+                ok_gh, msg_gh = sync_file_to_github(
+                    local_file_path=dest_path,
+                    repo_rel_path=repo_rel,
+                    github_token=gh_token,
+                    github_repo=gh_repo,
+                    branch=gh_branch,
+                )
+                if ok_gh:
+                    st.caption(f"☁️ {msg_gh}")
+                else:
+                    st.caption(f"ℹ️ {msg_gh}")
 
 col_run1, col_run2 = st.columns([1, 2])
 with col_run1:
     run_clicked = st.button("執行批次出圖", type="primary", use_container_width=True)
 
 target_names = list(dict.fromkeys(st.session_state["selected_targets"] + parse_target_names(extra_names_input)))
+if not is_admin and len(target_names) > MEMBER_MAX_BATCH:
+    target_names = target_names[:MEMBER_MAX_BATCH]
 
 if run_clicked:
     if not target_names:
@@ -567,23 +631,28 @@ if run_clicked:
         st.session_state["batch_logs"] = logs
         save_last_batch(records, logs)
 
-with st.expander("執行紀錄（Logs）", expanded=False):
-    for line in st.session_state.get("batch_logs", []):
-        st.text(line)
+if is_admin:
+    with st.expander("執行紀錄（Logs）", expanded=False):
+        for line in st.session_state.get("batch_logs", []):
+            st.text(line)
 
 st.divider()
-st.subheader("2. 班表圖檔預覽、下載與寄送")
+st.subheader("2. 班表圖檔預覽與下載" + ("／寄送" if is_admin else ""))
 
 records = st.session_state.get("batch_records", [])
 current_emails = load_friend_emails(CURRENT_DIR)
 sender_email, sender_password = get_mail_credentials()
 
 if not records:
-    st.info("尚未有產出的班表圖檔。請確認後台底稿或上傳班表後點選「執行批次出圖」。")
+    st.info("尚未有產出的班表圖檔。請在左側選擇人員或群組後點選「執行批次出圖」。")
 else:
     valid_records = [r for r in records if r.get("image_path") and os.path.exists(r.get("image_path", ""))]
 
-    top_c1, top_c2, top_c3 = st.columns([1.2, 1.3, 1.5])
+    if is_admin:
+        top_c1, top_c2, top_c3 = st.columns([1.2, 1.3, 1.5])
+    else:
+        top_c1, top_c2 = st.columns([1.4, 1.6])
+
     with top_c1:
         view_mode = st.radio(
             "顯示方式",
@@ -600,28 +669,29 @@ else:
                 mime="application/zip",
                 use_container_width=True,
             )
-    with top_c3:
-        if st.button("批次寄出全部人員班表", use_container_width=True):
-            open_batch_mail_confirm_dialog(
-                valid_records=valid_records,
-                current_emails=current_emails,
-                sender_email=sender_email,
-                sender_password=sender_password,
-            )
+    if is_admin:
+        with top_c3:
+            if st.button("批次寄出全部人員班表", use_container_width=True):
+                open_batch_mail_confirm_dialog(
+                    valid_records=valid_records,
+                    current_emails=current_emails,
+                    sender_email=sender_email,
+                    sender_password=sender_password,
+                )
 
     if view_mode == "分頁切換（推薦多人）" and len(valid_records) > 1:
         tab_labels = [f"{r.get('name', '')} ({r.get('file_date_str', '')})" for r in records]
         tabs = st.tabs(tab_labels)
         for idx, (tab, rec) in enumerate(zip(tabs, records)):
             with tab:
-                render_single_record_card(rec, idx, current_emails, sender_email, sender_password)
+                render_single_record_card(rec, idx, current_emails, sender_email, sender_password, is_admin)
 
     elif view_mode == "單人下拉檢視" and len(records) > 0:
         options_map = {f"{i}_{r.get('name', '')} ({r.get('file_date_str', '')})": (i, r) for i, r in enumerate(records)}
         chosen_key = st.selectbox("選擇要檢視的人員班表", options=list(options_map.keys()))
         chosen_idx, chosen_rec = options_map[chosen_key]
-        render_single_record_card(chosen_rec, chosen_idx, current_emails, sender_email, sender_password)
+        render_single_record_card(chosen_rec, chosen_idx, current_emails, sender_email, sender_password, is_admin)
 
     else:
         for idx, rec in enumerate(records):
-            render_single_record_card(rec, idx, current_emails, sender_email, sender_password)
+            render_single_record_card(rec, idx, current_emails, sender_email, sender_password, is_admin)
