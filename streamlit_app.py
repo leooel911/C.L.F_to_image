@@ -20,6 +20,7 @@ from schedule_plotter import (
     DEFAULT_SENDER_PASSWORD,
     DEFAULT_TXT_PATH,
     append_or_update_friend_email,
+    extract_all_employees_from_sources,
     list_stored_rosters,
     load_friend_emails,
     normalize_name,
@@ -174,17 +175,20 @@ if "upload_dir" not in st.session_state:
 os.makedirs(DEFAULT_RAW_DIR, exist_ok=True)
 
 st.title("C.L.F 勤務班表出圖與郵件通知系統 V2")
-st.caption("支援後台留存底稿（同單位同職位覆蓋）、分頁檢視、批次打包下載與郵件通知")
+st.caption("支援後台留存底稿（同單位同職位覆蓋）、班表全員自動帶入選單、分頁檢視與 ZIP 批次下載")
 
 friend_emails = load_friend_emails(CURRENT_DIR)
-default_targets = ["江立夫"] + [k for k in friend_emails.keys() if k != "江立夫"]
+sheet_employees = extract_all_employees_from_sources(DEFAULT_RAW_DIR, DEFAULT_TXT_PATH)
+sheet_names = [item["name"] for item in sheet_employees]
+all_selectable_names = list(dict.fromkeys(["江立夫"] + list(friend_emails.keys()) + sheet_names))
 
 with st.sidebar:
     st.header("出圖與名單設定")
+    st.caption(f"已從班表底稿自動帶出 {len(sheet_names)} 位人員")
     selected_friends = st.multiselect(
-        "快速選擇名單人員",
-        options=default_targets,
-        default=["江立夫"],
+        "快速選擇名單人員（含班表全員）",
+        options=all_selectable_names,
+        default=[n for n in ["江立夫"] if n in all_selectable_names],
     )
     extra_names_input = st.text_area(
         "其他指定姓名（可用逗號或換行分隔）",

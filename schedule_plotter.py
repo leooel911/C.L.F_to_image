@@ -894,3 +894,63 @@ def send_email_notification(
         return True, f"已寄送至【{clean_name}】({recipient})"
     except Exception as e:
         return False, f"寄送【{clean_name}】失敗：{e}"
+
+
+def extract_all_employees_from_sources(raw_dir: str = DEFAULT_RAW_DIR, txt_path: str = DEFAULT_TXT_PATH) -> list[dict]:
+    seen = set()
+    roster = []
+
+    raw_files = []
+    if raw_dir and os.path.isdir(raw_dir):
+        for ext in ("*.xlsx", "*.xls", "*.csv"):
+            for fp in glob.glob(os.path.join(raw_dir, "**", ext), recursive=True):
+                bn = os.path.basename(fp)
+                if not bn.startswith("~$") and bn != ".DS_Store":
+                    raw_files.append(fp)
+
+    raw_files.sort(key=lambda p: (-os.path.getmtime(p), os.path.basename(p)))
+
+    for fp in raw_files:
+        try:
+            df, unit, pos = read_schedule_dataframe(fp)
+            for _, row in df.iterrows():
+                vals = ["" if pd.isna(v) else str(v) for v in row.tolist()]
+                if len(vals) < 2:
+                    continue
+                if re.search(r"^[A-Z]?\d{5,8}$", vals[0].strip()):
+                    emp_name = normalize_name(vals[1])
+                    if emp_name and emp_name not in seen and not any(k in emp_name for k in ["姓名", "員工", "Name"]):
+                        seen.add(emp_name)
+                        roster.append({
+                            "name": emp_name,
+                            "emp_id": vals[0].strip(),
+                            "unit": unit,
+                            "pos": pos,
+                            "source": os.path.basename(fp),
+                        })
+        except Exception:
+            continue
+
+    if txt_path and os.path.exists(txt_path):
+        try:
+            with open(txt_path, "r", encoding="utf-8", errors="ignore") as f:
+                txt_content = f.read().strip()
+            if txt_content:
+                txt_df = pd.read_csv(io.StringIO(txt_content), sep="\t", header=None)
+                for _, row in txt_df.iterrows():
+                    vals = ["" if pd.isna(v) else str(v) for v in row.tolist()]
+                    if len(vals) >= 2 and re.search(r"^[A-Z]?\d{5,8}$", vals[0].strip()):
+                        emp_name = normalize_name(vals[1])
+                        if emp_name and emp_name not in seen:
+                            seen.add(emp_name)
+                            roster.append({
+                                "name": emp_name,
+                                "emp_id": vals[0].strip(),
+                                "unit": "TTN",
+                                "pos": "ALL",
+                                "source": os.path.basename(txt_path),
+                            })
+        except Exception:
+            pass
+
+    return roster
