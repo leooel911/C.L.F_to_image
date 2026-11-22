@@ -3,6 +3,7 @@
 C.L.F 勤務班表出圖與郵件通知系統（雲端／手機操作版 V2）
 """
 
+from datetime import datetime
 import hmac
 import io
 import json
@@ -34,6 +35,7 @@ from schedule_plotter import (
 )
 
 LAST_BATCH_PATH = os.path.join(CURRENT_DIR, ".last_batch.json")
+PENDING_REQUESTS_PATH = os.path.join(CURRENT_DIR, ".pending_roster_requests.json")
 CORE_FREQUENT_NAMES = ["江立夫", "黃淨茵", "李沛迪", "耿瑞騏", "王婷禾", "符湘君"]
 MEMBER_MAX_BATCH = 20
 
@@ -85,6 +87,53 @@ def sync_roster_file_to_github() -> tuple[bool, str]:
         github_repo=gh_repo,
         branch=gh_branch,
     )
+
+
+def load_pending_requests() -> list[dict]:
+    if os.path.exists(PENDING_REQUESTS_PATH):
+        try:
+            with open(PENDING_REQUESTS_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    return data
+        except Exception:
+            pass
+    return []
+
+
+def save_pending_requests(requests: list[dict]):
+    try:
+        with open(PENDING_REQUESTS_PATH, "w", encoding="utf-8") as f:
+            json.dump(requests, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def submit_frequent_request(name: str, email_or_acct: str, note: str = "") -> tuple[bool, str]:
+    clean_n = normalize_name(name)
+    mail_val = normalize_mail_input(email_or_acct, default_domain="@thsrc.com.tw")
+    if not clean_n:
+        return False, "請填寫人員姓名。"
+    if not mail_val or "@" not in mail_val:
+        return False, "請填寫有效的信箱或帳號前綴。"
+
+    reqs = load_pending_requests()
+    for r in reqs:
+        if normalize_name(r.get("name", "")) == clean_n:
+            r["email"] = mail_val
+            r["note"] = note.strip()
+            r["submitted_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+            save_pending_requests(reqs)
+            return True, f"已更新【{clean_n}】的加入常用名單申請，等待管理員審核。"
+
+    reqs.append({
+        "name": clean_n,
+        "email": mail_val,
+        "note": note.strip(),
+        "submitted_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+    })
+    save_pending_requests(reqs)
+    return True, f"已送出【{clean_n}】加入常用名單的申請，等待管理員審核。"
 
 
 def save_last_batch(records: list[dict], logs: list[str]):
@@ -327,6 +376,9 @@ if "selected_targets" not in st.session_state:
 if "roster_sync_notice" not in st.session_state:
     st.session_state["roster_sync_notice"] = ""
 
+if "member_req_notice" not in st.session_state:
+    st.session_state["member_req_notice"] = ""
+
 if "last_mail_feedback" not in st.session_state:
     st.session_state["last_mail_feedback"] = None
 
@@ -339,12 +391,15 @@ if "is_admin" not in st.session_state:
 os.makedirs(DEFAULT_RAW_DIR, exist_ok=True)
 
 is_admin = bool(st.session_state.get("is_admin", False))
+pending_reqs = load_pending_requests()
 
 st.title("C.L.F 勤務班表出圖與郵件通知系統 V2")
 if is_admin:
-    st.caption("目前身分：**管理員模式**｜支援底稿覆蓋、發送名單管理、寄信確認與分頁／ZIP 匯出")
+    st.caption(
+        f"目前身分：**管理員模式**｜待審核常用名單申請：{len(pending_reqs)} 筆"
+    )
 else:
-    st.caption("目前身分：**組員自助出圖模式**｜選擇人員或群組即可產生與下載班表圖檔")
+    st.caption("目前身分：**組員自助出圖模式**｜可檢視常用名單、申請加入常用名單、產生與下載班表")
 
 if is_admin and st.session_state.get("last_mail_feedback"):
     fb_type, fb_msg = st.session_state["last_mail_feedback"]
@@ -439,18 +494,67 @@ with st.sidebar:
         placeholder="例如：王小明, 陳小華",
     )
 
-    if is_admin:
-        with st.expander(f"檢視 {active_group} 名單明細（{len(filtered_options)} 人）", expanded=False):
-            if active_group in ("常用核心（6人）", "已存信箱名單"):
-                for person in filtered_options[:60]:
-                    mail_addr = friend_emails.get(person, "未設定信箱")
-                    st.caption(f"• {person} — `{mail_addr}`")
-            else:
-                st.caption("、".join(filtered_options[:80]) + (" ..." if len(filtered_options) > 80 else ""))
+    with st.expander(f"檢視 {active_group} 名單明細（{len(filtered_options)} 人）", expanded=False):
+        if active_group in ("常用核心（6人）", "已存信箱名單"):
+            for person in filtered_options[:60]:
+                mail_addr = friend_emails.get(person, "未設定信箱")
+                st.caption(f"• {person} — `{mail_addr}`")
+            if len(filtered_options) > 60:
+                st.caption(f"...其餘 {len(filtered_options) - 60} 人請在上方下拉框直接搜尋姓名。")
+        else:
+            st.caption("、".join(filtered_options[:80]) + (" ..." if len(filtered_options) > 80 else ""))
 
+    if not is_admin:
+        st.divider()
+        st.subheader("申請加入常用名單")
+        if st.session_state.get("member_req_notice"):
+            st.caption(st.session_state["member_req_notice"])
+        req_name = st.text_input("申請姓名", key="member_req_name", placeholder="例如：王小明")
+        req_mail = st.text_input("信箱或帳號前綴", key="member_req_mail", placeholder="例如：ming_wang 或 ming_wang@thsrc.com.tw")
+        req_note = st.text_input("備註／組別（選填）", key="member_req_note", placeholder="例如：TTN / TA")
+        if st.button("申請加入常用名單", use_container_width=True):
+            ok_req, msg_req = submit_frequent_request(req_name, req_mail, req_note)
+            if ok_req:
+                st.session_state["member_req_notice"] = msg_req
+                st.success(msg_req)
+            else:
+                st.error(msg_req)
+
+    if is_admin:
         skip_unchanged = st.checkbox("略過未變動且已存在的班表圖", value=False)
         force_regenerate = st.checkbox("強制重新繪製（忽略快取）", value=True)
         sync_github_on_upload = st.checkbox("上傳覆蓋時同步更新 GitHub 底稿", value=True)
+
+        st.divider()
+        st.subheader(f"待審核常用名單申請（{len(pending_reqs)} 筆）")
+        if pending_reqs:
+            for idx_r, r_item in enumerate(list(pending_reqs)):
+                r_name = r_item.get("name", "")
+                r_mail = r_item.get("email", "")
+                r_note = r_item.get("note", "")
+                r_time = r_item.get("submitted_at", "")
+                with st.container(border=True):
+                    st.markdown(f"**{r_name}** — `{r_mail}`")
+                    st.caption(f"{r_time}" + (f"｜{r_note}" if r_note else ""))
+                    ap_c1, ap_c2 = st.columns(2)
+                    with ap_c1:
+                        if st.button("核准加入", key=f"approve_req_{idx_r}_{r_name}", use_container_width=True):
+                            ok_add, msg_add = append_or_update_friend_email(r_name, r_mail, CURRENT_DIR)
+                            if ok_add:
+                                _, gh_msg = sync_roster_file_to_github()
+                                updated_reqs = [x for i, x in enumerate(pending_reqs) if i != idx_r]
+                                save_pending_requests(updated_reqs)
+                                st.session_state["roster_sync_notice"] = f"已核准【{r_name}】加入常用名單（{gh_msg}）"
+                                st.rerun()
+                            else:
+                                st.error(msg_add)
+                    with ap_c2:
+                        if st.button("駁回", key=f"reject_req_{idx_r}_{r_name}", use_container_width=True):
+                            updated_reqs = [x for i, x in enumerate(pending_reqs) if i != idx_r]
+                            save_pending_requests(updated_reqs)
+                            st.rerun()
+        else:
+            st.caption("目前沒有待審核的加入申請。")
 
         st.divider()
         st.subheader("編輯／新增發送名單")
