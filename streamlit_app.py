@@ -25,6 +25,7 @@ from schedule_plotter import (
     load_friend_emails,
     normalize_name,
     remove_friend_email,
+    resolve_roster_file,
     run_batch_render,
     save_uploaded_roster_overwrite,
     send_email_notification,
@@ -72,6 +73,19 @@ def get_github_sync_config() -> tuple[str, str, str]:
     return token, repo, branch
 
 
+def sync_roster_file_to_github() -> tuple[bool, str]:
+    gh_token, gh_repo, gh_branch = get_github_sync_config()
+    rpath = resolve_roster_file(CURRENT_DIR)
+    repo_rel = os.path.basename(rpath)
+    return sync_file_to_github(
+        local_file_path=rpath,
+        repo_rel_path=repo_rel,
+        github_token=gh_token,
+        github_repo=gh_repo,
+        branch=gh_branch,
+    )
+
+
 def save_last_batch(records: list[dict], logs: list[str]):
     try:
         with open(LAST_BATCH_PATH, "w", encoding="utf-8") as f:
@@ -103,6 +117,33 @@ def parse_target_names(raw_text: str) -> list[str]:
             seen.add(cn)
             result.append(cn)
     return result
+
+
+def normalize_mail_input(raw_mail: str, default_domain: str = "@thsrc.com.tw") -> str:
+    s = (raw_mail or "").strip()
+    if not s:
+        return ""
+    if "@" not in s and default_domain:
+        dom = default_domain if default_domain.startswith("@") else f"@{default_domain}"
+        return f"{s}{dom}"
+    return s
+
+
+def parse_bulk_roster_lines(bulk_text: str, default_domain: str = "@thsrc.com.tw") -> list[tuple[str, str]]:
+    parsed = []
+    if not bulk_text:
+        return parsed
+    for line in bulk_text.splitlines():
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        parts = re.split(r"[,，:\t;；]+", s, maxsplit=1)
+        if len(parts) == 2:
+            name_part = normalize_name(parts[0])
+            mail_part = normalize_mail_input(parts[1], default_domain=default_domain)
+            if name_part and mail_part:
+                parsed.append((name_part, mail_part))
+    return parsed
 
 
 def build_zip_bytes(records: list[dict]) -> bytes:
@@ -176,10 +217,13 @@ if "upload_dir" not in st.session_state:
 if "selected_targets" not in st.session_state:
     st.session_state["selected_targets"] = ["江立夫"]
 
+if "roster_sync_notice" not in st.session_state:
+    st.session_state["roster_sync_notice"] = ""
+
 os.makedirs(DEFAULT_RAW_DIR, exist_ok=True)
 
 st.title("C.L.F 勤務班表出圖與郵件通知系統 V2")
-st.caption("支援後台留存底稿（同單位同職位覆蓋）、分類精簡快選、名單編輯刪除、分頁檢視與 ZIP 下載")
+st.caption("支援後台留存底稿（同單位同職位覆蓋）、分類精簡快選、名單同步 GitHub、分頁檢視與 ZIP 下載")
 
 friend_emails = load_friend_emails(CURRENT_DIR)
 frequent_names = list(dict.fromkeys(["江立夫"] + list(friend_emails.keys())))
@@ -260,9 +304,12 @@ with st.sidebar:
 
     st.divider()
     st.subheader("編輯／新增發送名單")
+    if st.session_state.get("roster_sync_notice"):
+        st.caption(st.session_state["roster_sync_notice"])
+
     roster_mode = st.radio(
         "操作模式",
-        options=["編輯／刪除現有名單", "新增人員"],
+        options=["編輯／刪除現有名單", "快速新增／批次貼上"],
         horizontal=True,
     )
 
@@ -280,7 +327,8 @@ with st.sidebar:
                 if st.button("更新信箱", use_container_width=True):
                     ok, msg = append_or_update_friend_email(target_edit_name, edit_email_val, CURRENT_DIR)
                     if ok:
-                        st.success(msg)
+                        _, gh_msg = sync_roster_file_to_github()
+                        st.session_state["roster_sync_notice"] = f"{msg}（{gh_msg}）"
                         st.rerun()
                     else:
                         st.error(msg)
@@ -288,22 +336,52 @@ with st.sidebar:
                 if st.button("刪除人員", use_container_width=True):
                     ok, msg = remove_friend_email(target_edit_name, CURRENT_DIR)
                     if ok:
-                        st.success(msg)
+                        _, gh_msg = sync_roster_file_to_github()
+                        st.session_state["roster_sync_notice"] = f"{msg}（{gh_msg}）"
                         st.rerun()
                     else:
                         st.error(msg)
         else:
             st.caption("目前發送名單為空。")
     else:
-        new_name = st.text_input("人員姓名", key="roster_new_name")
-        new_email = st.text_input("電子信箱", key="roster_new_email")
-        if st.button("新增至發送名單", use_container_width=True):
-            ok, msg = append_or_update_friend_email(new_name, new_email, CURRENT_DIR)
+        default_domain = st.text_input("預設信箱網域（未含 @ 時自動補上）", value="@thsrc.com.tw", key="roster_default_domain")
+        new_name = st.text_input("單筆姓名", key="roster_new_name", placeholder="例如：王小明")
+        new_email = st.text_input("單筆信箱或帳號前綴", key="roster_new_email", placeholder="例如：ming_wang 或 ming_wang@thsrc.com.tw")
+        if st.button("快速新增單筆", use_container_width=True):
+            final_mail = normalize_mail_input(new_email, default_domain=default_domain)
+            ok, msg = append_or_update_friend_email(new_name, final_mail, CURRENT_DIR)
             if ok:
-                st.success(msg)
+                _, gh_msg = sync_roster_file_to_github()
+                st.session_state["roster_sync_notice"] = f"{msg}（{gh_msg}）"
                 st.rerun()
             else:
                 st.error(msg)
+
+        bulk_text = st.text_area(
+            "批次貼上（每行一筆：姓名, 信箱或帳號）",
+            height=90,
+            key="roster_bulk_text",
+            placeholder="王小明, ming_wang\n陳小華: hua_chen@thsrc.com.tw",
+        )
+        if st.button("批次匯入名單", use_container_width=True):
+            items = parse_bulk_roster_lines(bulk_text, default_domain=default_domain)
+            if not items:
+                st.error("請依「姓名, 信箱」格式輸入至少一行。")
+            else:
+                ok_cnt, fail_msgs = 0, []
+                for p_name, p_mail in items:
+                    ok, msg = append_or_update_friend_email(p_name, p_mail, CURRENT_DIR)
+                    if ok:
+                        ok_cnt += 1
+                    else:
+                        fail_msgs.append(msg)
+                if ok_cnt:
+                    _, gh_msg = sync_roster_file_to_github()
+                    st.session_state["roster_sync_notice"] = f"已批次儲存 {ok_cnt} 筆名單（{gh_msg}）。"
+                for fm_err in fail_msgs:
+                    st.error(fm_err)
+                if ok_cnt:
+                    st.rerun()
 
     with st.expander("目前發送名單一覽"):
         for person, mail in load_friend_emails(CURRENT_DIR).items():
