@@ -468,7 +468,6 @@ sheet_employees = extract_all_employees_from_sources(DEFAULT_RAW_DIR, DEFAULT_TX
 
 group_map: dict[str, list[str]] = {
     "常用名單": frequent_list_names,
-    "已存信箱名單": all_roster_names,
 }
 for item in sheet_employees:
     u_code = item.get("unit", "TTN")
@@ -539,7 +538,7 @@ with st.sidebar:
     )
 
     with st.expander(f"檢視 {active_group} 名單明細（{len(filtered_options)} 人）", expanded=False):
-        if active_group in ("常用名單", "已存信箱名單"):
+        if active_group == "常用名單":
             for person in filtered_options[:60]:
                 mail_addr = friend_emails.get(person, "未設定信箱")
                 st.caption(f"• {person} — `{mail_addr}`")
