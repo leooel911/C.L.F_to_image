@@ -465,9 +465,21 @@ def setup_font():
         "/System/Library/Fonts/PingFang.ttc",
         "/System/Library/Fonts/STHeiti Medium.ttc",
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
         "C:\\Windows\\Fonts\\msjh.ttc",
         "C:\\Windows\\Fonts\\msjhbd.ttc",
     ]
+    for root_dir in ("/usr/share/fonts", "/usr/local/share/fonts"):
+        if os.path.isdir(root_dir):
+            for dirpath, _, filenames in os.walk(root_dir):
+                for fn in sorted(filenames):
+                    low = fn.lower()
+                    if ("cjk" in low or "noto" in low or "pingfang" in low or "msjh" in low) and low.endswith((".ttc", ".ttf", ".otf")):
+                        full = os.path.join(dirpath, fn)
+                        if full not in font_paths:
+                            font_paths.append(full)
     for path in font_paths:
         if os.path.exists(path):
             try:
