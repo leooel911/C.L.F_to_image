@@ -928,6 +928,8 @@ if is_admin:
 
             if sync_github_on_upload:
                 repo_rel = f"班表原檔/{os.path.basename(dest_path)}"
+                os.makedirs(os.path.join(CURRENT_DIR, "班表原檔"), exist_ok=True)
+                gh_ok, gh_msg = sync_file_to_github(dest_path, repo_rel, f"Upload template {os.path.basename(dest_path)}")
                 ok_gh, msg_gh = sync_file_to_github(
                     local_file_path=dest_path,
                     repo_rel_path=repo_rel,
