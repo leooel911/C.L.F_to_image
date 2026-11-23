@@ -1,3 +1,5 @@
+if "skip_unchanged" not in locals():
+    skip_unchanged = False
 #!/usr/bin/env python3
 """
 C.L.F 勤務班表出圖與郵件通知系統（雲端／手機操作版 V2）
@@ -977,8 +979,6 @@ if run_clicked:
                 raw_dir=DEFAULT_RAW_DIR,
                 out_dir=DEFAULT_OUT_DIR,
                 txt_path=DEFAULT_TXT_PATH,
-if "skip_unchanged" not in locals():
-    skip_unchanged = False
                 skip_unchanged=skip_unchanged,
                 force_regenerate=force_regenerate,
             )
