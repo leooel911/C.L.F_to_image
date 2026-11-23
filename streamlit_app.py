@@ -444,6 +444,8 @@ if "is_admin" not in st.session_state:
 os.makedirs(DEFAULT_RAW_DIR, exist_ok=True)
 
 is_admin = bool(st.session_state.get("is_admin", False))
+admin_view_mode = str(st.query_params.get("view", "") or "").strip().lower() == "admin"
+
 pending_reqs = load_pending_requests()
 
 if bool(st.session_state.get("is_admin", False)) and not st.session_state.get("last_batch_loaded_for_admin", False):
@@ -606,6 +608,15 @@ with st.sidebar:
 
     if st.session_state.get("is_admin", False):
         st.caption("目前身分：管理員模式")
+        if not admin_view_mode:
+            if st.button("開啟管理員控制台視窗", key="btn_open_admin_win", use_container_width=True):
+                st.query_params["view"] = "admin"
+                st.rerun()
+        else:
+            if st.button("返回出圖主畫面", key="btn_back_main_win", use_container_width=True):
+                st.query_params.clear()
+                st.rerun()
+
         if st.button("登出", key="btn_admin_logout_bottom", use_container_width=True):
             st.session_state["is_admin"] = False
             st.session_state["last_batch_loaded_for_admin"] = False
