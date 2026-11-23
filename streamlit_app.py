@@ -595,8 +595,8 @@ with st.sidebar:
         _expected_pin = str(_os.environ.get("ADMIN_PIN", "") or "")
 
     def _submit_admin_pin():
-        _entered = str(st.session_state.get("admin_pin_enter_input", "") or "")
-        if _expected_pin and _entered == _expected_pin:
+        _entered = str(st.session_state.get("admin_pin_enter_input", "") or "").strip()
+        if _expected_pin and _entered == str(_expected_pin).strip():
             st.session_state["is_admin"] = True
             st.session_state["admin_pin_error"] = ""
         elif not _expected_pin:
@@ -622,6 +622,8 @@ with st.sidebar:
             _login_clicked = st.form_submit_button("登入", use_container_width=True)
             if _login_clicked:
                 _submit_admin_pin()
+                if st.session_state.get("is_admin", False):
+                    st.rerun()
         if st.session_state.get("admin_pin_error"):
             st.error(st.session_state["admin_pin_error"])
 
