@@ -961,6 +961,7 @@ if run_clicked:
                 raw_dir=DEFAULT_RAW_DIR,
                 out_dir=DEFAULT_OUT_DIR,
                 txt_path=DEFAULT_TXT_PATH,
+                skip_unchanged = bool(skip_unchanged) if 'skip_unchanged' in locals() else False
                 skip_unchanged=skip_unchanged,
                 force_regenerate=force_regenerate,
             )
