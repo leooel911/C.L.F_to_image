@@ -581,6 +581,9 @@ with st.sidebar:
         on_change=_on_multiselect_change,
     )
 
+    if not filtered_options:
+        st.caption(f"【{active_group}】目前沒有可選人員。")
+
     st.divider()
     import os as _os
     _expected_pin = ""
