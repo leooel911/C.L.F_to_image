@@ -554,8 +554,10 @@ with st.sidebar:
         picked = [n for n in st.session_state.get(ms_key, []) if n in allowed_set]
         prev_targets = st.session_state.get("selected_targets", [])
         if not is_admin and batch_limit == 1:
-            # 一般組員單次上限 1 人：以最新點選的那位取代舊選擇
+            # 一般組員單次上限 1 人：若原本已有選取又點選第 2 人，觸發提示視窗並保留最新 1 位
             newly = [n for n in picked if n not in prev_targets]
+            if len(prev_targets) >= 1 and len(newly) >= 1:
+                st.session_state["show_single_limit_modal"] = True
             chosen = newly[-1:] if newly else picked[-1:]
             st.session_state[ms_key] = chosen
             st.session_state["selected_targets"] = chosen
@@ -576,6 +578,29 @@ with st.sidebar:
         key=ms_key,
         on_change=_on_multiselect_change,
     )
+
+
+if st.session_state.get("show_single_limit_modal", False) and not is_admin and not is_frequent_member:
+    st.session_state["show_single_limit_modal"] = False
+    if hasattr(st, "dialog"):
+        @st.dialog("出圖人數上限提醒")
+        def _single_limit_notice_dialog():
+            st.info(
+                f"一般組員目前單次僅能出圖 {NON_FREQUENT_MAX_BATCH} 人，系統已為您切換為最新選取的人員。"
+            )
+            st.write(
+                f"如有一次幫多位同事出圖的需求，請於側欄下方點選 **「申請加入常用名單」**，"
+                f"經管理員審核通過後，單次出圖上限即可提升至 **{FREQUENT_MEMBER_MAX_BATCH} 人**。"
+            )
+            if st.button("我知道了", type="primary", use_container_width=True):
+                st.rerun()
+
+        _single_limit_notice_dialog()
+    else:
+        st.warning(
+            f"一般組員目前單次僅能出圖 {NON_FREQUENT_MAX_BATCH} 人（已切換為最新選取人員）；"
+            f"如有多人出圖需求，可於側欄申請加入常用名單（上限 {FREQUENT_MEMBER_MAX_BATCH} 人）。"
+        )
 
     if st.session_state.get("selected_targets"):
         if st.button("清空已選", use_container_width=True):
