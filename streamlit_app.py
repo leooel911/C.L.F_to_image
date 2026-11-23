@@ -871,8 +871,6 @@ if st.session_state.get("show_single_limit_modal", False) and not is_admin and n
             for person, mail in list(load_friend_emails(CURRENT_DIR).items())[:60]:
                 st.write(f"- **{person}**：`{mail}`")
     else:
-        skip_unchanged = False
-        force_regenerate = True
         sync_github_on_upload = False
 
     st.divider()
@@ -949,13 +947,17 @@ target_names = list(dict.fromkeys(st.session_state["selected_targets"] + parse_t
 if not is_admin and len(target_names) > MEMBER_MAX_BATCH:
     target_names = target_names[:MEMBER_MAX_BATCH]
 
+if "skip_unchanged" not in locals():
+    skip_unchanged = False
+if "force_regenerate" not in locals():
+    force_regenerate = True
+if "sync_github_on_upload" not in locals():
+    sync_github_on_upload = True
 if run_clicked:
     if not target_names:
         st.warning("請先至少選擇或輸入一位人員姓名。")
     else:
         with st.spinner("正在讀取後台底稿並繪製圖檔..."):
-            if "skip_unchanged" not in locals():
-                skip_unchanged = False
             records, logs = run_batch_render(
                 target_names=target_names,
                 raw_dir=DEFAULT_RAW_DIR,
