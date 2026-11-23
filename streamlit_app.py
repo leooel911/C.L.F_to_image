@@ -954,6 +954,8 @@ if run_clicked:
         st.warning("請先至少選擇或輸入一位人員姓名。")
     else:
         with st.spinner("正在讀取後台底稿並繪製圖檔..."):
+            if "skip_unchanged" not in locals():
+                skip_unchanged = False
             records, logs = run_batch_render(
                 target_names=target_names,
                 raw_dir=DEFAULT_RAW_DIR,
