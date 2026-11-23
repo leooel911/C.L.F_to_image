@@ -917,6 +917,7 @@ col_run1, col_run2 = st.columns([1, 2])
 with col_run1:
     run_clicked = st.button("執行批次出圖", type="primary", use_container_width=True)
 
+extra_names_input = extra_names_raw if 'extra_names_raw' in locals() else ''
 target_names = list(dict.fromkeys(st.session_state["selected_targets"] + parse_target_names(extra_names_input)))
 if not is_admin and len(target_names) > MEMBER_MAX_BATCH:
     target_names = target_names[:MEMBER_MAX_BATCH]
