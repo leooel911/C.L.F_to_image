@@ -616,7 +616,6 @@ with st.sidebar:
                 type="password",
                 key="admin_pin_enter_input",
                 placeholder="輸入 PIN 後按 Enter 登入",
-                on_change=_submit_admin_pin,
             )
             _login_clicked = st.form_submit_button("登入", use_container_width=True)
             if _login_clicked:
