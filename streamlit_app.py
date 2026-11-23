@@ -596,7 +596,6 @@ with st.sidebar:
         if _expected_pin and _entered == _expected_pin:
             st.session_state["is_admin"] = True
             st.session_state["admin_pin_error"] = ""
-            st.session_state["admin_pin_enter_input"] = ""
         elif not _expected_pin:
             st.session_state["admin_pin_error"] = "尚未設定 ADMIN_PIN"
         else:
