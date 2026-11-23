@@ -1,5 +1,3 @@
-if "skip_unchanged" not in locals():
-    skip_unchanged = False
 #!/usr/bin/env python3
 """
 C.L.F 勤務班表出圖與郵件通知系統（雲端／手機操作版 V2）
@@ -444,8 +442,6 @@ if "is_admin" not in st.session_state:
 os.makedirs(DEFAULT_RAW_DIR, exist_ok=True)
 
 is_admin = bool(st.session_state.get("is_admin", False))
-admin_view_mode = (str(st.query_params.get("view", "") or "").strip().lower() == "admin") or bool(st.session_state.get("admin_console_active", False))
-
 pending_reqs = load_pending_requests()
 
 if bool(st.session_state.get("is_admin", False)) and not st.session_state.get("last_batch_loaded_for_admin", False):
@@ -531,6 +527,33 @@ is_frequent_member = bool(active_frequent_user and active_frequent_user in all_r
 batch_limit = FREQUENT_MEMBER_MAX_BATCH if (is_admin or is_frequent_member) else NON_FREQUENT_MAX_BATCH
 
 with st.sidebar:
+    import os as _os
+    _expected_pin = ""
+    try:
+        _expected_pin = str(st.secrets.get("ADMIN_PIN", "") or "")
+    except Exception:
+        _expected_pin = ""
+    if not _expected_pin:
+        _expected_pin = str(_os.environ.get("ADMIN_PIN", "") or "")
+
+    if st.session_state.get("is_admin", False):
+        st.success("已解鎖管理員模式")
+        if st.button("登出管理員", key="btn_logout_admin_direct", use_container_width=True):
+            st.session_state["is_admin"] = False
+            st.session_state["last_batch_loaded_for_admin"] = False
+            st.rerun()
+    else:
+        with st.popover("管理員登入", use_container_width=True):
+            _pin_val = st.text_input("ADMIN_PIN", type="password", key="admin_pin_popover_input")
+            if st.button("確認解鎖", key="btn_unlock_admin_popover", type="primary", use_container_width=True):
+                if _expected_pin and _pin_val == _expected_pin:
+                    st.session_state["is_admin"] = True
+                    st.rerun()
+                elif not _expected_pin:
+                    st.error("尚未設定 ADMIN_PIN")
+                else:
+                    st.error("PIN 碼錯誤")
+
     st.header("出圖與名單設定")
     st.caption(f"底稿 {len(all_sheet_names)} 人｜名單 {len(all_roster_names)} 人")
 
@@ -582,71 +605,6 @@ with st.sidebar:
         key=ms_key,
         on_change=_on_multiselect_change,
     )
-
-    if not filtered_options:
-        st.caption(f"【{active_group}】目前沒有可選人員。")
-
-    st.divider()
-    import os as _os
-    _expected_pin = ""
-    try:
-        _expected_pin = str(st.secrets.get("ADMIN_PIN", "") or "")
-    except Exception:
-        _expected_pin = ""
-    if not _expected_pin:
-        _expected_pin = str(_os.environ.get("ADMIN_PIN", "") or "")
-
-    def _submit_admin_pin():
-        _entered = str(st.session_state.get("admin_pin_enter_input", "") or "").strip()
-        if _expected_pin and _entered == str(_expected_pin).strip():
-            st.session_state["is_admin"] = True
-            st.session_state["admin_pin_error"] = ""
-        elif not _expected_pin:
-            st.session_state["admin_pin_error"] = "尚未設定 ADMIN_PIN"
-        else:
-            st.session_state["admin_pin_error"] = "PIN 碼錯誤"
-
-    if st.session_state.get("is_admin", False):
-        st.caption("目前身分：管理員模式")
-        if not admin_view_mode:
-            st.markdown(
-                '<a href="?view=admin" target="_blank" rel="noopener noreferrer" '
-                'style="display:block;text-align:center;padding:0.45rem 0.75rem;'
-                'border:1px solid rgba(250,250,250,0.2);border-radius:0.5rem;'
-                'text-decoration:none;color:inherit;margin-bottom:0.4rem;">'
-                '於新視窗開啟管理員控制台</a>',
-                unsafe_allow_html=True,
-            )
-            if st.button("切換至管理員控制台", key="btn_open_admin_win", use_container_width=True):
-                st.query_params["view"] = "admin"
-                st.session_state["admin_console_active"] = True
-                st.rerun()
-        else:
-            if st.button("返回出圖主畫面", key="btn_back_main_win", use_container_width=True):
-                st.query_params.clear()
-                st.session_state["admin_console_active"] = False
-                st.rerun()
-
-        if st.button("登出", key="btn_admin_logout_bottom", use_container_width=True):
-            st.session_state["is_admin"] = False
-            st.session_state["last_batch_loaded_for_admin"] = False
-            st.session_state["admin_pin_error"] = ""
-            st.rerun()
-    else:
-        with st.form("admin_login_bottom_form", clear_on_submit=False):
-            st.text_input(
-                "管理員 PIN",
-                type="password",
-                key="admin_pin_enter_input",
-                placeholder="輸入 PIN 後按 Enter 登入",
-            )
-            _login_clicked = st.form_submit_button("登入", use_container_width=True)
-            if _login_clicked:
-                _submit_admin_pin()
-                if st.session_state.get("is_admin", False):
-                    st.rerun()
-        if st.session_state.get("admin_pin_error"):
-            st.error(st.session_state["admin_pin_error"])
 
 
 if st.session_state.get("show_single_limit_modal", False) and not is_admin and not is_frequent_member:
@@ -970,8 +928,6 @@ if is_admin:
 
             if sync_github_on_upload:
                 repo_rel = f"班表原檔/{os.path.basename(dest_path)}"
-                os.makedirs(os.path.join(CURRENT_DIR, "班表原檔"), exist_ok=True)
-                gh_ok, gh_msg = sync_file_to_github(dest_path, repo_rel, f"Upload template {os.path.basename(dest_path)}")
                 ok_gh, msg_gh = sync_file_to_github(
                     local_file_path=dest_path,
                     repo_rel_path=repo_rel,
