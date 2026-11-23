@@ -444,7 +444,7 @@ if "is_admin" not in st.session_state:
 os.makedirs(DEFAULT_RAW_DIR, exist_ok=True)
 
 is_admin = bool(st.session_state.get("is_admin", False))
-admin_view_mode = str(st.query_params.get("view", "") or "").strip().lower() == "admin"
+admin_view_mode = (str(st.query_params.get("view", "") or "").strip().lower() == "admin") or bool(st.session_state.get("admin_console_active", False))
 
 pending_reqs = load_pending_requests()
 
@@ -609,12 +609,22 @@ with st.sidebar:
     if st.session_state.get("is_admin", False):
         st.caption("目前身分：管理員模式")
         if not admin_view_mode:
-            if st.button("開啟管理員控制台視窗", key="btn_open_admin_win", use_container_width=True):
+            st.markdown(
+                '<a href="?view=admin" target="_blank" rel="noopener noreferrer" '
+                'style="display:block;text-align:center;padding:0.45rem 0.75rem;'
+                'border:1px solid rgba(250,250,250,0.2);border-radius:0.5rem;'
+                'text-decoration:none;color:inherit;margin-bottom:0.4rem;">'
+                '於新視窗開啟管理員控制台</a>',
+                unsafe_allow_html=True,
+            )
+            if st.button("切換至管理員控制台", key="btn_open_admin_win", use_container_width=True):
                 st.query_params["view"] = "admin"
+                st.session_state["admin_console_active"] = True
                 st.rerun()
         else:
             if st.button("返回出圖主畫面", key="btn_back_main_win", use_container_width=True):
                 st.query_params.clear()
+                st.session_state["admin_console_active"] = False
                 st.rerun()
 
         if st.button("登出", key="btn_admin_logout_bottom", use_container_width=True):
