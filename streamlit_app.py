@@ -527,33 +527,6 @@ is_frequent_member = bool(active_frequent_user and active_frequent_user in all_r
 batch_limit = FREQUENT_MEMBER_MAX_BATCH if (is_admin or is_frequent_member) else NON_FREQUENT_MAX_BATCH
 
 with st.sidebar:
-    import os as _os
-    _expected_pin = ""
-    try:
-        _expected_pin = str(st.secrets.get("ADMIN_PIN", "") or "")
-    except Exception:
-        _expected_pin = ""
-    if not _expected_pin:
-        _expected_pin = str(_os.environ.get("ADMIN_PIN", "") or "")
-
-    if st.session_state.get("is_admin", False):
-        st.success("已解鎖管理員模式")
-        if st.button("登出管理員", key="btn_logout_admin_direct", use_container_width=True):
-            st.session_state["is_admin"] = False
-            st.session_state["last_batch_loaded_for_admin"] = False
-            st.rerun()
-    else:
-        with st.popover("管理員登入", use_container_width=True):
-            _pin_val = st.text_input("ADMIN_PIN", type="password", key="admin_pin_popover_input")
-            if st.button("確認解鎖", key="btn_unlock_admin_popover", type="primary", use_container_width=True):
-                if _expected_pin and _pin_val == _expected_pin:
-                    st.session_state["is_admin"] = True
-                    st.rerun()
-                elif not _expected_pin:
-                    st.error("尚未設定 ADMIN_PIN")
-                else:
-                    st.error("PIN 碼錯誤")
-
     st.header("出圖與名單設定")
     st.caption(f"底稿 {len(all_sheet_names)} 人｜名單 {len(all_roster_names)} 人")
 
@@ -605,6 +578,49 @@ with st.sidebar:
         key=ms_key,
         on_change=_on_multiselect_change,
     )
+
+    st.divider()
+    import os as _os
+    _expected_pin = ""
+    try:
+        _expected_pin = str(st.secrets.get("ADMIN_PIN", "") or "")
+    except Exception:
+        _expected_pin = ""
+    if not _expected_pin:
+        _expected_pin = str(_os.environ.get("ADMIN_PIN", "") or "")
+
+    def _submit_admin_pin():
+        _entered = str(st.session_state.get("admin_pin_enter_input", "") or "")
+        if _expected_pin and _entered == _expected_pin:
+            st.session_state["is_admin"] = True
+            st.session_state["admin_pin_error"] = ""
+            st.session_state["admin_pin_enter_input"] = ""
+        elif not _expected_pin:
+            st.session_state["admin_pin_error"] = "尚未設定 ADMIN_PIN"
+        else:
+            st.session_state["admin_pin_error"] = "PIN 碼錯誤"
+
+    if st.session_state.get("is_admin", False):
+        st.caption("目前身分：管理員模式")
+        if st.button("登出", key="btn_admin_logout_bottom", use_container_width=True):
+            st.session_state["is_admin"] = False
+            st.session_state["last_batch_loaded_for_admin"] = False
+            st.session_state["admin_pin_error"] = ""
+            st.rerun()
+    else:
+        with st.form("admin_login_bottom_form", clear_on_submit=False):
+            st.text_input(
+                "管理員 PIN",
+                type="password",
+                key="admin_pin_enter_input",
+                placeholder="輸入 PIN 後按 Enter 登入",
+                on_change=_submit_admin_pin,
+            )
+            _login_clicked = st.form_submit_button("登入", use_container_width=True)
+            if _login_clicked:
+                _submit_admin_pin()
+        if st.session_state.get("admin_pin_error"):
+            st.error(st.session_state["admin_pin_error"])
 
 
 if st.session_state.get("show_single_limit_modal", False) and not is_admin and not is_frequent_member:
@@ -961,7 +977,7 @@ if run_clicked:
                 raw_dir=DEFAULT_RAW_DIR,
                 out_dir=DEFAULT_OUT_DIR,
                 txt_path=DEFAULT_TXT_PATH,
-                skip_unchanged = bool(skip_unchanged) if 'skip_unchanged' in locals() else False
+skip_unchanged = bool(skip_unchanged) if 'skip_unchanged' in locals() else False
                 skip_unchanged=skip_unchanged,
                 force_regenerate=force_regenerate,
             )
